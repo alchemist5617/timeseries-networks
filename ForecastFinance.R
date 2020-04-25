@@ -24,13 +24,13 @@ aapl <- getSymbols("AAPL", auto.assign=FALSE)
 x<-aapl["2018/2019"]  #data for 2018 and 2019
 
 data <- data.frame(
-  date = seq(as.Date("2002/1/1"), by = "month", length.out = 21),
+  date = seq(as.Date("2002/1/1"), by = "month", length.out = 36),
   x.test,
-  y
+  yhat
 )
 
 
 ggplot(data, aes(x=date)) +                    # basic graphical object
   +     geom_line(aes(y=x.test,colour="red") ) +  # first layer
-  +     geom_line(aes(y=y,colour="blue"))+ ylab("Values")+ xlab("Date")+
+  +     geom_line(aes(y=yhat,colour="blue"))+ ylab("Values")+ xlab("Date")+
   +     scale_color_discrete(name = "Y series", labels = c("Predictions", "Observations"))

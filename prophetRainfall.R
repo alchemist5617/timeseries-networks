@@ -79,9 +79,9 @@ x<-data[28,7,]
 n=20
 # Set forecasting window length (in years)
 m=3
-ori# Set start year
-start = 1946
-origin = 1980
+# Set start year
+start = 1977
+origin = 1977
 # Set annual sampling rate
 f = 12
 h = m*f
@@ -99,11 +99,11 @@ test_end <- test_start + m*f -1
 x.train <- x[train_start:train_end]
 x.test <- x[test_start:test_end]
 
-ds = seq(from = as.Date("1980-01-01"), to = as.Date("1999-12-01"), by = 'month')
+ds = seq(from = as.Date("1977-01-01"), to = as.Date("1996-12-01"), by = 'month')
 
 pa <- phase_average(x.train, f)
 y<- pa$result
-#y<-x.train
+y<-x.train
 
 df <- data.frame(ds,y)
 
