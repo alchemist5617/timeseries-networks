@@ -1,5 +1,7 @@
 library(prophet)
 library(forecast)
+library(Rssa)
+library(ggplot2)
 
 load("data.RData")
 load("lat.RData")
@@ -48,3 +50,43 @@ A <- inv_phase_average(A, f, pa$averages, pa$stds)
 #A <- prophet.forecst(x.train, origin,n,h)
 
 accuracy(A, x.test)
+
+
+
+#SSA'
+
+L = 7
+s <- ssa(x.train, L = 12)
+# Reconstruction stage
+# The results are the reconstructed series r$F1, r$F2, and r$F3
+recon <- reconstruct(s)
+# Calculate the residuals
+res <- residuals(recon)
+
+
+result = matrix(0.0,L,h)
+for(i in c(1:L)){
+  #lambda <- BoxCox.lambda(mfs[,i])
+  #result[i,] = forecast(ets(recon[[i]], biasadj = TRUE),h, biasadj = TRUE)$mean     
+  result[i,] =prophet.forecst(recon[[i]], origin,n,h)
+}
+
+A = colSums(result)
+A[A<0]<-0
+#SSA = ts(SSA, start = c(origin+z+n_train, 1), freq=f)
+
+# error.A = accuracy(ABCZT, x.test)
+accuracy(A, x.test)
+
+
+
+d <- data.frame(
+  date = seq(as.Date("1982/1/1"), by = "month", length.out = length(x.test)),
+  x.test,
+  A
+)
+
+ggplot(d, aes(x=date)) +                    # basic graphical object
+  geom_line(aes(y=x.test,colour="red") ) +  # first layer
+  geom_line(aes(y=A,colour="blue"))+ ylab("Values")+ xlab("Date")+
+  scale_color_discrete(name = "Y series", labels = c("Observations", "SSA"))

@@ -70,9 +70,9 @@ prophet.forecst<-function(y, start_year, n, h){
 }
 
 
-load("data.RData")
-load("lat.RData")
-load("lon.RData")
+load("../data.RData")
+load("../lat.RData")
+load("../lon.RData")
 
 x<-data[28,7,]
 
@@ -81,7 +81,7 @@ n=20
 m=3
 # Set start year
 start = 1977
-origin = 1977
+origin = 1980
 # Set annual sampling rate
 f = 12
 h = m*f
