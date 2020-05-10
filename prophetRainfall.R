@@ -76,11 +76,11 @@ load("../lon.RData")
 
 x<-data[28,7,]
 
-n=20
+n=30
 # Set forecasting window length (in years)
 m=3
 # Set start year
-start = 1977
+start = 1946
 origin = 1980
 # Set annual sampling rate
 f = 12

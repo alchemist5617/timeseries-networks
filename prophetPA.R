@@ -1,7 +1,8 @@
 library(prophet)
 library(forecast)
-library(Rssa)
+#library(Rssa)
 library(ggplot2)
+library(bsts)
 
 load("data.RData")
 load("lat.RData")
@@ -22,7 +23,7 @@ n=30
 m=3
 # Set start year
 start = 1946
-origin = 1960
+origin = 1980
 # Set annual sampling rate
 f = 12
 h = m*f
@@ -79,6 +80,31 @@ A[A<0]<-0
 accuracy(A, x.test)
 
 
+
+d <- data.frame(
+  date = seq(as.Date("1982/1/1"), by = "month", length.out = length(x.test)),
+  x.test,
+  A
+)
+
+ggplot(d, aes(x=date)) +                    # basic graphical object
+  geom_line(aes(y=x.test,colour="red") ) +  # first layer
+  geom_line(aes(y=A,colour="blue"))+ ylab("Values")+ xlab("Date")+
+  scale_color_discrete(name = "Y series", labels = c("Observations", "SSA"))
+
+
+#bsts
+ss <- AddLocalLinearTrend(list(), x.train.t)
+ss <- AddSeasonal(ss, x.train.t, nseasons = 12)
+
+model1 <- bsts(x.train.t,
+               state.specification = ss,
+               niter = 1000)
+
+
+pred1 <- predict(model1, horizon = 36)
+A <- inv_phase_average(pred1$mean, f, pa$averages, pa$stds)
+accuracy(A, x.test)
 
 d <- data.frame(
   date = seq(as.Date("1982/1/1"), by = "month", length.out = length(x.test)),
