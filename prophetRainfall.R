@@ -65,6 +65,7 @@ prophet.forecst<-function(y, start_year, n, h){
  m <- prophet(df, weekly.seasonality=FALSE, daily.seasonality = FALSE)
  future <- make_future_dataframe(m, periods = h, freq='month')
  forecast <- predict(m, future)
+ #prophet_plot_components(m, forecast)
  yhat<-tail(forecast$yhat, n = h)
  return(yhat)
 }
@@ -99,7 +100,7 @@ test_end <- test_start + m*f -1
 x.train <- x[train_start:train_end]
 x.test <- x[test_start:test_end]
 
-ds = seq(from = as.Date("1977-01-01"), to = as.Date("1996-12-01"), by = 'month')
+ds = seq(from = as.Date("1980-01-01"), to = as.Date("2009-12-01"), by = 'month')
 
 pa <- phase_average(x.train, f)
 y<- pa$result

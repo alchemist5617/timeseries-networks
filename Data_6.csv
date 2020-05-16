@@ -1,5 +1,4 @@
-sep=,
-year,occurrence,"Total deaths",Injured,Affected,Homeless,"Total affected","Total damage  ('000 US$)"
+year,occurrence,Total deaths,Injured,Affected,Homeless,Total affected,Total damage  ('000 US$)
 1965,1,2000,,1500000,,1500000,
 1969,1,,,1700000,,1700000,1000
 1973,1,100000,,3000000,,3000000,76000
@@ -16,7 +15,7 @@ year,occurrence,"Total deaths",Injured,Affected,Homeless,"Total affected","Total
 2011,1,,,4805679,,4805679,
 2012,1,,,1000000,,1000000,
 2015,1,,,10200000,,10200000,1400000
-
-
-"Created on: April 27, 2020"
-"Source: EM-DAT: The Emergency Events Database - Universite catholique de Louvain (UCL) - CRED, D. Guha-Sapir - www.emdat.be, Brussels, Belgium"
+,,,,,,,
+,,,,,,,
+"Created on: April 27, 2020",,,,,,,
+"Source: EM-DAT: The Emergency Events Database - Universite catholique de Louvain (UCL) - CRED, D. Guha-Sapir - www.emdat.be, Brussels, Belgium",,,,,,,

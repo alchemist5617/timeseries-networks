@@ -11,6 +11,7 @@ prophet.forecst.xts<-function(y, h, colNum = 4, growth_type = 'linear'){
   m <- prophet(df, daily.seasonality=TRUE, yearly.seasonality=TRUE, growth = growth_type)
   future <- make_future_dataframe(m, periods = h, freq='month')
   forecast <- predict(m, future)
+  plot(m, forecast) + add_changepoints_to_plot(m)
   yhat<-tail(forecast$yhat, n = h)
   return(yhat)
 }
@@ -22,6 +23,9 @@ accuracy(y, x.test)
 
 aapl <- getSymbols("AAPL", auto.assign=FALSE)
 x<-aapl["2018/2019"]  #data for 2018 and 2019
+
+
+
 
 data <- data.frame(
   date = seq(as.Date("2002/1/1"), by = "month", length.out = 36),

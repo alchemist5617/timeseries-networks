@@ -102,8 +102,6 @@ accuracy(A, x.test)
 
 
 
-
-
 d <- data.frame(
   date = seq(as.Date("1982/1/1"), by = "month", length.out = length(x.test)),
   x.test,
@@ -153,12 +151,14 @@ accuracy(A, x.test)
 
 
 d <- data.frame(
-  date = seq(as.Date("1982/1/1"), by = "month", length.out = length(x.test)),
+  date = seq(as.Date("2010/1/1"), by = "month", length.out = length(x.test)),
   x.test,
   A
 )
 
 ggplot(d, aes(x=date)) +                    # basic graphical object
-  geom_line(aes(y=x.test,colour="red") ) +  # first layer
-  geom_line(aes(y=A,colour="blue"))+ ylab("Values")+ xlab("Date")+
-  scale_color_discrete(name = "Y series", labels = c("Observations", "SSA"))
+  geom_line(aes(y=x.test,colour="steelblue4"), size = 1.1) +  # first layer
+  geom_line(aes(y=A,colour="red"), size = 1.1)+ ylab("Precipitation (mm)")+ xlab("Date")+
+  scale_color_discrete(name="Labels", labels = c("Predictions","Observations"))+
+  ggtitle("36 months forecasting of monthly precipitation")+ 
+  theme(plot.title = element_text(hjust = 0.5),text = element_text(size=18))
