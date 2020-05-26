@@ -135,7 +135,7 @@ def crosscorr(datax, datay, lag=0):
     ----------
     crosscorr : float
     """
-    return datax.corr(datay.shift(lag))
+    return datax.corr(datay.shift(lag), method = 'spearman')
 
 
 def phase_averaging(data,freq = 12):
@@ -379,6 +379,129 @@ def extreme_plot(cluster_id, rolling_n =12, extreme_type = "dry", n_components =
     #fig.savefig(filename)
     return(df_oni)
 
+def extreme_plot_rainfall_temperature(cluster_id, rolling_n =12, extreme_type = "dry", n_components = 6):   
+    f = 12
+    n = 30
+
+    n_components = 6
+    level = 12
+    temporal_limits = {"time_min":datetime(1948, 1, 1, 0, 0),"time_max":datetime(2016, 1, 1, 0, 0) } 
+    spatial_limits = {"lon_min":-40,"lon_max":60,"lat_min":-40,"lat_max":40}
+
+    d = Data('../GPCC_half.nc','precip',temporal_limits, missing_value=-9.96921e+36)
+
+    result = d.get_data()
+    lon_list = d.get_lon_list()
+    lat_list = d.get_lat_list()
+    lon = d.get_lon()
+    lat = d.get_lat()
+
+    result = pf.deseasonalize(np.array(result))
+
+    d = Data('../air_monthly_mean_africa.nc','air', missing_value=-9.96921e+36)
+
+    result_air = d.get_data()
+    lon_list_air = d.get_lon_list()
+    lat_list_air = d.get_lat_list()
+    lon_air = d.get_lon()
+    lat_air = d.get_lat()
+
+    result_air = pf.deseasonalize(np.array(result_air))
+
+    #result = transform(result)
+
+    air_list = list(zip(lon_list_air,lat_list_air))
+    pre_list = list(zip(lon_list,lat_list))
+
+
+    clean_list = []
+    Idx = []
+    loc_list = []
+    for i in range(len(air_list)):
+        temp = neighbour_average(pre_list,pd.DataFrame(result),air_list[i][0], air_list[i][1])
+        if temp.shape:
+        #if not np.isnan(temp):
+            clean_list.append(temp)
+            Idx.append(i)
+            loc_list.append(air_list[i])
+
+    precipitation = np.array(clean_list)#/np.array(clean_list).std()
+    precipitation = pd.DataFrame(np.transpose(precipitation))
+
+    result_air = pd.DataFrame(result_air)
+    temperature = result_air.iloc[:,Idx]
+
+    lon_list = [list(t) for t in zip(*loc_list)][0]
+    lat_list = [list(t) for t in zip(*loc_list)][1]
+
+    #lat_list = list(zip(*loc_list))[1]
+    #lon_list = list(zip(*loc_list))[0]
+
+    temp = np.array(precipitation)
+    clustering = AgglomerativeClustering(n_clusters=n_components).fit(np.transpose(temp))
+
+    df = pd.DataFrame({"lons":lon_list,"lats":lat_list,"clusters":clustering.labels_})
+
+    lon_temp = df["lons"].values
+    lon_temp[lon_temp > 180] = lon_temp[lon_temp > 180] -360
+    df["lons"] = lon_temp
+
+    clusters = clustering.labels_
+
+    Idx = np.where((df.clusters == cluster_id).values)[0]
+    precip = precipitation.iloc[:,Idx]
+    air = temperature.iloc[:,Idx]
+
+    precip_agg = precip.rolling(rolling_n).apply(sum)
+    precip_agg = precip_agg.iloc[rolling_n - 1:,:]
+
+    air_agg = air.rolling(rolling_n).mean()
+    air_agg = air_agg.iloc[rolling_n - 1:,:]
+
+    N = precip_agg.shape[0]
+
+    d3 = N - (n*f + 1)
+
+    result_index_precip = []
+    result_index_air = []
+    for k in range(d3):
+        onset = k
+        end = k + (n*f - (rolling_n - 1))
+
+        if extreme_type == "wet":
+            a = precip_agg.iloc[onset:end,:].quantile(0.95).values
+            b = precip_agg.iloc[end + (rolling_n - 1),:].values
+            index = np.where(np.greater(b,a))[0]
+
+        else:
+            a = precip_agg.iloc[onset:end,:].quantile(0.05).values
+            b = precip_agg.iloc[end + (rolling_n - 1),:].values
+
+            c = air_agg.iloc[onset:end,:].quantile(0.95).values
+            d = precip_agg.iloc[end + (rolling_n - 1),:].values
+
+            index = np.where(np.greater(a,b))[0]
+            index_air = np.where(np.greater(d,c))[0]
+        result_index_precip.append(index)
+        result_index_air.append(index_air)
+
+    number_precip = []
+    for i in range(len(result_index_precip)):
+        number_precip.append(len(result_index_precip[i]))
+
+    number_air = []
+    for i in range(len(result_index_air)):
+        number_air.append(len(result_index_air[i]))
+
+    if rolling_n == 12:
+        start_date = "19781201"
+    else:
+        start_date = "19780{}01".format(rolling_n)
+    df_oni = pd.DataFrame({"n_precip":number_precip, "n_air":number_air},
+                      index=pd.date_range(start_date, periods=len(number_precip), freq='MS')
+                      )
+    
+    return(df_oni)
 
 
 

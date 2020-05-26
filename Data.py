@@ -247,7 +247,7 @@ class Data:
         c = data.shape[1]
         for i in range(r):
             for j in range(c):
-                if data[i,j,-1] != (missing_value) and data[i,j,-1] > -1000 :
+                if (not np.ma.is_masked(data[i,j,:])) and data[i,j,-1] != (missing_value) and data[i,j,-1] > -1000 :
                     result.append(data[i,j,:])
                     index2d[len(result)-1] = (i,j)  
                     lon_list.append(self._lon[i])
