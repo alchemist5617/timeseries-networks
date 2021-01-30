@@ -73,6 +73,7 @@ def uni_deseasonalize(ts,freq=12):
         result[Idx] = (temp[Idx] - temp[Idx].mean())/temp[Idx].std()
     return(result) 
 
+
 def deseasonalize(data,freq=12):
     """
     The shape of data should be (time, index) 
@@ -82,6 +83,7 @@ def deseasonalize(data,freq=12):
     data_deseasonal = np.zeros(data.shape)
     for i in range(n):
         temp = np.copy(data[:,i])
+        temp = np.ravel(temp)
         r = np.zeros((N))
         for j in range(freq):
             Idx = np.arange(j,N,freq)
