@@ -7,13 +7,26 @@ from datetime import datetime
 import Rung as rung
 import PCA_functions as pf
 from tigramite.pcmci import PCMCI
-from tigramite.independence_tests import ParCorr, GPDC
+from tigramite.independence_tests import ParCorr
+#from gpdc import GPDC
 import tigramite.data_processing as pp
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error
 from sklearn.cluster import AgglomerativeClustering
-from statsmodels.tsa.stattools import grangercausalitytests
-from scipy import stats
+#import pyximport
+#pyximport.install()
+
+#import tigramite_cython_code
+
+def shift_df(df, start_lag = 1, end_lag = 12):
+    lags = np.arange(start_lag,end_lag + 1)
+    df = df.assign(**{
+    '{} (t-{})'.format(col, t): df[col].shift(t)
+    for t in lags
+    for col in df
+    })
+    df = df.dropna()
+    return(df)
 
 def number_non_random(data):
     """Assumes data of shape (N, T)"""   
@@ -52,13 +65,13 @@ def drought_timeseries(file_name, start_year = 1922, end_year=2015, extremes_tre
     for i in range(N):
         count.append(np.count_nonzero(ET_gamma[i,:] <= extremes_treshold))
     return(count[start_index:end_index])
-
+    
 def drought_timeseries_agg(file_name, start_year = 1922, end_year=2015, base_year = 1922):
     start_index = (start_year - base_year) * 12
     end_index = start_index + (end_year - (start_year - 1))*12
     ET_gamma = np.load(file_name)
     return(ET_gamma[start_index:end_index])
-    
+
 def data_generator_avg_std(file_name, code, temporal_limits, avgs, stds, freq = 12, missing_value=-9.96921e+36):
     sst = Data(file_name,code,temporal_limits, missing_value= missing_value)
 
@@ -205,7 +218,7 @@ def PCA_computer_rotated_rung(file_name, code, temporal_limits,n_components_sst=
 def PCMCI_generator(ts, count, tau_min=0, tau_max = 12, alpha_level = 0.05):
     result_extremes = np.array(count)
     result_extremes = result_extremes.reshape((-1,1))
-
+    
     result_sst = np.array(ts)
 
     result = np.concatenate((result_extremes,result_sst), axis=1)
@@ -216,10 +229,10 @@ def PCMCI_generator(ts, count, tau_min=0, tau_max = 12, alpha_level = 0.05):
     pcmci = PCMCI(dataframe=dataframe, cond_ind_test=cond_ind_test)
 
     results = pcmci.run_pcmci(tau_min=tau_min, tau_max=tau_max, pc_alpha=None)
-
+    
     pq_matrix = results['p_matrix']
     val_matrix = results['val_matrix']
-
+   
     N = pq_matrix.shape[0]
 
     link_dict = dict()
@@ -231,11 +244,11 @@ def PCMCI_generator(ts, count, tau_min=0, tau_max = 12, alpha_level = 0.05):
                  for i, tau in good_links}
         # Sort by value
         link_dict[j] = sorted(links, key=links.get, reverse=True)
-
+        
     link = np.array(link_dict[0])
     link = link[link[:,0] != 0,:]
     return(link)
-
+    
 def PCMCI_generator_GPDC(ts, count, tau_min=0, tau_max = 12, alpha_level = 0.05):
     result_extremes = np.array(count)
     result_extremes = result_extremes.reshape((-1,1))
@@ -270,7 +283,6 @@ def PCMCI_generator_GPDC(ts, count, tau_min=0, tau_max = 12, alpha_level = 0.05)
     link = link[link[:,0] != 0,:]
     return(link)
 
-    
 def time_series_maker(pc, df_sst, result, level = 95): 
     if np.abs(df_sst.pc.values.min()) > np.abs(df_sst.pc.values.max()):
         limit = np.percentile(df_sst.pc.values, 1 - level)
@@ -291,6 +303,7 @@ def time_series_maker(pc, df_sst, result, level = 95):
 def min_MSE_finder(count, result_sst, link, df_sst, V, ratio=0.8, tau=-1, n_estimators=100, max_depth=5):
     result = []
     link = link[(link[:,1] <= tau) & (link[:,1] > (tau - 12))]
+#    link = link[link[:,1]<=tau]    
 
     df = pd.DataFrame({"drought":count, "drought1":count})
     df.drought1 = df.drought1.shift(abs(tau))
@@ -330,7 +343,8 @@ def min_MSE_finder(count, result_sst, link, df_sst, V, ratio=0.8, tau=-1, n_esti
 def min_MSE_finder_V(count, result_sst, link, df_sst, V, ratio=0.8, tau=-1, n_estimators=100, max_depth=5):
     result = []
     link = link[(link[:,1] <= tau) & (link[:,1] > (tau - 12))]
-
+#    link = link[link[:,1]<=tau]
+    
     df = pd.DataFrame({"drought":count, "drought1":count})
     df.drought1 = df.drought1.shift(abs(tau))
     df = df.dropna()
@@ -369,7 +383,8 @@ def min_MSE_finder_V(count, result_sst, link, df_sst, V, ratio=0.8, tau=-1, n_es
 def min_MSE_finder_cluster(count, result_sst, link, df_sst, ratio=0.8, tau=-1, n_estimators=100, max_depth=5):
     result = []
     link = link[(link[:,1] <= tau) & (link[:,1] > (tau - 12))]
-
+  #  link = link[link[:,1]<=tau] 
+    
     df = pd.DataFrame({"drought":count, "drought1":count})
     df.drought1 = df.drought1.shift(abs(tau))
     df = df.dropna()
@@ -383,6 +398,7 @@ def min_MSE_finder_cluster(count, result_sst, link, df_sst, ratio=0.8, tau=-1, n
     model.fit(x_train, y_train)
     y_pred = model.predict(x_test)
     result.append(mean_squared_error(y_pred, y_test))
+
 
     for z in range(len(link)):
         df = pd.DataFrame({"drought":count, "drought1":count})
@@ -651,10 +667,20 @@ def model_result_cluster(count, data_sst, best_link, df_sst, model, tau=-1, n_es
     else:
         return(np.nan)
 
-def crosscorr(datax, datay, lag=1):   
-    return(stats.pearsonr(datax[lag:], datay[:-lag]))
+def crosscorr(datax, datay, lag=0):
+    """ Lag-N cross correlation. 
+    Parameters
+    ----------
+    lag : int, default 0
+    datax, datay : pandas.Series objects of equal length
+
+    Returns
+    ----------
+    crosscorr : float
+    """
+    return datax.corr(datay.shift(lag))
         
-def corr_generator(ts, count, tau_max = 12, level = 0.05):
+def corr_generator(ts, count, tau_max = 12, percentile = 95):
     result_extremes = np.array(count)
     result_extremes = result_extremes.reshape((-1,1))
 
@@ -662,62 +688,19 @@ def corr_generator(ts, count, tau_max = 12, level = 0.05):
 
     data = np.concatenate((result_extremes,result_sst), axis=1)
     data = np.array(data)
+    df = pd.DataFrame(data)
 
-    N = data.shape[1]-1
+    N = df.shape[1]-1
     result = np.zeros((tau_max,N))
 
     for j in range(1,N):
-        for i in range(1,tau_max + 1):
-            r, pvalue = crosscorr(data[:,0],data[:,j],lag=i)
-            result[i-1,j] = r if pvalue < level else 0
+        xcov_monthly = [crosscorr(df[0],df[j],lag=i) for i in range(1,tau_max + 1)]
+        result[:,j] = xcov_monthly
       
     result = np.abs(result)
-    #limit = np.percentile(result, percentile)
-    limit = 0
-    Index = np.where(result > limit)
-    link = np.array(list(zip((Index[1]+1),(Index[0] + 1)*(-1)))) 
-    result = result[Index]
-    return(link[(-result).argsort()])
-    
-def granger_generator(ts, count, test_type = "all", tau_min = 1, tau_max = 12,level = 0.05):
-    result_extremes = np.array(count)
-    result_extremes = result_extremes.reshape((-1,1))
-    componenet = []
-    lag = []
-    result_sst = np.array(ts)
-    
-    for i in range(result_sst.shape[1]):
-        sst = result_sst[:,i].reshape((-1,1))
-        data = np.concatenate((result_extremes,sst), axis=1)
-        data = np.array(data)
-        df = pd.DataFrame(data)
-        lag_range = range(tau_min, tau_max+1)
-        r = grangercausalitytests(df,maxlag=lag_range,  verbose=False)
-        p = np.zeros(4)
-        for j in lag_range:
-            p[0] = r[j][0]['lrtest'][1]
-            p[1] = r[j][0]['params_ftest'][1]
-            p[2] = r[j][0]['ssr_chi2test'][1]
-            p[3] = r[j][0]['ssr_ftest'][1]
-            
-            
-            if test_type == "all" and np.all(p < level):
-                componenet.append(i+1)
-                lag.append(-j)
-            elif test_type == 'lrtest' and p[0] < level:
-                componenet.append(i+1)
-                lag.append(-j)
-            elif test_type == 'params_ftest' and p[1] < level:
-                componenet.append(i+1)
-                lag.append(-j)
-            elif test_type == 'ssr_chi2test' and p[2] < level:
-                componenet.append(i+1)
-                lag.append(-j)
-            elif test_type == 'ssr_ftest' and p[3] < level:
-                componenet.append(i+1)
-                lag.append(-j)
-            
-    link = np.array(list(zip((componenet),(lag))))    
+    limit = np.percentile(result, percentile)
+    Index = np.where(result >= limit)
+    link = np.array(list(zip((Index[1]+1),(Index[0] + 1)*(-1))))    
     return(link)
 
 def clustering_computer(file_name, code, temporal_limits,n_components_sst=76, missing_value=-9.96921e+36):
@@ -761,3 +744,43 @@ def base_model_result1(count, base_model, tau=-1):
     y_pred = base_model.predict(x_test)
     return(mean_squared_error(y_pred, y_test))
 
+def granger_generator(ts, count, test_type = "all", tau_min = 1, tau_max = 12,level = 0.05):
+    result_extremes = np.array(count)
+    result_extremes = result_extremes.reshape((-1,1))
+    componenet = []
+    lag = []
+    result_sst = np.array(ts)
+    
+    for i in range(result_sst.shape[1]):
+        sst = result_sst[:,i].reshape((-1,1))
+        data = np.concatenate((result_extremes,sst), axis=1)
+        data = np.array(data)
+        df = pd.DataFrame(data)
+        lag_range = range(tau_min, tau_max+1)
+        r = grangercausalitytests(df,maxlag=lag_range,  verbose=False)
+        p = np.zeros(4)
+        for j in lag_range:
+            p[0] = r[j][0]['lrtest'][1]
+            p[1] = r[j][0]['params_ftest'][1]
+            p[2] = r[j][0]['ssr_chi2test'][1]
+            p[3] = r[j][0]['ssr_ftest'][1]
+            
+            
+            if test_type == "all" and np.all(p < level):
+                componenet.append(i+1)
+                lag.append(-j)
+            elif test_type == 'lrtest' and p[0] < level:
+                componenet.append(i+1)
+                lag.append(-j)
+            elif test_type == 'params_ftest' and p[1] < level:
+                componenet.append(i+1)
+                lag.append(-j)
+            elif test_type == 'ssr_chi2test' and p[2] < level:
+                componenet.append(i+1)
+                lag.append(-j)
+            elif test_type == 'ssr_ftest' and p[3] < level:
+                componenet.append(i+1)
+                lag.append(-j)
+            
+    link = np.array(list(zip((componenet),(lag))))    
+    return(link)

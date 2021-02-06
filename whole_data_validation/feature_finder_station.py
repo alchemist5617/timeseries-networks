@@ -12,6 +12,8 @@ import tigramite.data_processing as pp
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error
 from sklearn.cluster import AgglomerativeClustering
+from scipy import signal
+from scipy import stats
 
 def number_non_random(data):
     """Assumes data of shape (N, T)"""   
@@ -56,7 +58,7 @@ def drought_timeseries(file_name, start_year = 1922, end_year=2015, extremes_tre
     count = []
     for i in range(N):
         count.append(np.count_nonzero(ET_gamma[i,:] <= extremes_treshold))
-    count_detrend = difference(count[start_index:end_index])
+    count_detrend = signal.detrend(count[start_index:end_index])
     return(count[start_index:end_index], count_detrend)
     
 def data_generator_avg_std(file_name, code, temporal_limits, avgs, stds, freq = 12, missing_value=-9.96921e+36):
@@ -134,7 +136,7 @@ def PCA_computer(file_name, code, temporal_limits,n_components_sst=76, missing_v
 
     return(result_sst, ts, V, df_sst, avgs, stds)
     
-def PCA_computer_rotated(file_name, code, temporal_limits,n_components_sst=76, missing_value=-9.96921e+36):
+def PCA_computer_rotated(file_name, code, temporal_limits,n_components_sst=98, missing_value=-9.96921e+36):
     sst = Data(file_name,code,temporal_limits, missing_value= missing_value)
 
     result = sst.get_data()
@@ -142,7 +144,7 @@ def PCA_computer_rotated(file_name, code, temporal_limits,n_components_sst=76, m
     lat_sst_list = sst.get_lat_list()
 
     result_sst, avgs, stds = pf.deseasonalize_avg_std(np.array(result))
-    result_sst = difference(result_sst)
+    result_sst = signal.detrend(result_sst, axis=0)
     weights = np.sqrt(np.abs(np.cos(np.array(lat_sst_list)* math.pi/180)))
     for i in range(len(weights)):
         result_sst[:,i] = weights[i] * result_sst[:,i]
@@ -151,22 +153,42 @@ def PCA_computer_rotated(file_name, code, temporal_limits,n_components_sst=76, m
         
     V, U, S, ts, eig, explained, max_comps = rung.pca_svd(data_sst,truncate_by='max_comps', max_comps=n_components_sst)
     
-    loading_sst = pf.varimax(V, q=1000)
-    loading_sst = rung.svd_flip(loading_sst)
-    for z in range(loading_sst.shape[1]):
-        loading_sst[:,z] = loading_sst[:,z] / np.linalg.norm(loading_sst[:,z])
+   # loading_sst = pf.varimax(V, q=1000)
+   # loading_sst = rung.svd_flip(loading_sst)
+   # for z in range(loading_sst.shape[1]):
+   #     loading_sst[:,z] = loading_sst[:,z] / np.linalg.norm(loading_sst[:,z])
+   # 
+   # V = loading_sst
     
-    V = loading_sst
-    
+    Vr, Rot = rung.varimax(V)
+    Vr = rung.svd_flip(Vr)
+
+    # Get explained variance of rotated components
+    s2 = np.diag(S)**2 / (ts.shape[0] - 1.)
+
+    # matrix with diagonal containing variances of rotated components
+    S2r = np.dot(np.dot(np.transpose(Rot), np.matrix(np.diag(s2))), Rot)
+    expvar = np.diag(S2r)
+
+    sorted_expvar = np.sort(expvar)[::-1]
+    # s_orig = ((Vt.shape[1] - 1) * s2) ** 0.5
+
+    # reorder all elements according to explained variance (descending)
+    nord = np.argsort(expvar)[::-1]
+    Vr = Vr[:, nord]
+
+    # Get time series of UNMASKED data
+    comps_ts = np.matmul(np.array(data_sst),Vr)
+
     df_sst = pd.DataFrame({"lons":lon_sst_list,"lats":lat_sst_list})
 
     lon_temp = df_sst["lons"].values
     lon_temp[lon_temp > 180] = lon_temp[lon_temp > 180] -360
     df_sst["lons"].vlues = lon_temp
     
-    return(result_sst, ts, V, df_sst, avgs, stds)
+    return(result_sst, comps_ts, Vr, df_sst, avgs, stds)
     
-def PCMCI_generator(ts, count, tau_max = 12):
+def PCMCI_generator(ts, count, tau_min = 0, tau_max = 12, alpha_level = 0.05):
     result_extremes = np.array(count)
     result_extremes = result_extremes.reshape((-1,1))
     
@@ -179,11 +201,11 @@ def PCMCI_generator(ts, count, tau_max = 12):
     cond_ind_test = ParCorr()
     pcmci = PCMCI(dataframe=dataframe, cond_ind_test=cond_ind_test)
 
-    results = pcmci.run_pcmci(tau_max=tau_max, pc_alpha=None)
+    results = pcmci.run_pcmci(tau_min=tau_min, tau_max=tau_max, pc_alpha=None)
     
     pq_matrix = results['p_matrix']
     val_matrix = results['val_matrix']
-    alpha_level = 0.05
+   
     N = pq_matrix.shape[0]
 
     link_dict = dict()
@@ -228,7 +250,7 @@ def time_series_maker_cluster(result, df_sst, cluster):
         
 def min_MSE_finder_V(count, result_sst, link, df_sst, V, ratio=0.8, tau=-1, n_estimators=100, max_depth=5):
     result = []
-    link = link[link[:,1] <= tau]
+#    link = link[link[:,1] <= tau]
 
     df = pd.DataFrame({"drought":count, "drought1":count})
     df.drought1 = df.drought1.shift(abs(tau))
@@ -303,6 +325,7 @@ def min_MSE_finder(count, result_sst, link, df_sst, V, ratio=0.8, tau=-1, n_esti
         y_pred = model.predict(x_test)
         result.append(mean_squared_error(y_pred, y_test))
     return(result,link)
+
     
 def best_link_finder(count, data_sst, link, df_sst, V, ratio=0.8, tau=-1, n_estimators=100, max_depth=5):
     
@@ -517,8 +540,12 @@ def base_model_result(original_count, count, base_model, best_link, tau=-1):
     df.drought1 = df.drought1.shift(abs(tau))
     df = df.dropna()
 
-    start = np.abs(best_link[:,1].min() - tau)
-    
+    if len(best_link) > 0:
+        best_link = np.array(best_link)
+        start = np.abs(best_link[:,1].min() - tau)
+    else:
+        start = 0    
+
     x_test =  df.iloc[start:,1].values
     y_test = df.iloc[start:,0].values
     x_test  = x_test.reshape(-1, 1)
@@ -593,20 +620,11 @@ def model_result_cluster(original_count, count, data_sst, best_link, df_sst, mod
     else:
         return(np.nan)
 
-def crosscorr(datax, datay, lag=0):
-    """ Lag-N cross correlation. 
-    Parameters
-    ----------
-    lag : int, default 0
-    datax, datay : pandas.Series objects of equal length
 
-    Returns
-    ----------
-    crosscorr : float
-    """
-    return datax.corr(datay.shift(lag))
+def crosscorr(datax, datay, lag=1):   
+    return(stats.pearsonr(datax[lag:], datay[:-lag]))
         
-def corr_generator(ts, count, tau_max = 12, percentile = 95):
+def corr_generator(ts, count, tau_min = 1, tau_max = 12, level = 0.05):
     result_extremes = np.array(count)
     result_extremes = result_extremes.reshape((-1,1))
 
@@ -614,20 +632,22 @@ def corr_generator(ts, count, tau_max = 12, percentile = 95):
 
     data = np.concatenate((result_extremes,result_sst), axis=1)
     data = np.array(data)
-    df = pd.DataFrame(data)
 
-    N = df.shape[1]-1
-    result = np.zeros((tau_max,N))
+    N = data.shape[1]-1
+    result = np.zeros((tau_max - tau_min + 1,N))
 
     for j in range(1,N):
-        xcov_monthly = [crosscorr(df[0],df[j],lag=i) for i in range(1,tau_max + 1)]
-        result[:,j] = xcov_monthly
+        for i in range(tau_min,tau_max + 1):
+            r, pvalue = crosscorr(data[:,0],data[:,j],lag=i)
+            result[i-tau_min,j] = r if pvalue < level else 0
       
     result = np.abs(result)
-    limit = np.percentile(result, percentile)
-    Index = np.where(result >= limit)
-    link = np.array(list(zip((Index[1]+1),(Index[0] + 1)*(-1))))    
-    return(link)
+    #limit = np.percentile(result, percentile)
+    limit = 0
+    Index = np.where(result > limit)
+    link = np.array(list(zip((Index[1]+1),(Index[0] + tau_min)*(-1)))) 
+    result = result[Index]
+    return(link[(-result).argsort()])
 
 def clustering_computer(file_name, code, temporal_limits,n_components_sst=76, missing_value=-9.96921e+36):
     sst = Data(file_name,code,temporal_limits, missing_value= missing_value)
@@ -657,4 +677,60 @@ def clustering_computer(file_name, code, temporal_limits,n_components_sst=76, mi
         ts[:,i] = result_sst[:,Idx].mean(axis=1)
 
     return(result_sst, ts, df_sst, avgs, stds)
+
+
+def base_model_result1(count, base_model, tau=-1):
+    df = pd.DataFrame({"drought":count, "drought1":count})
+    df.drought1 = df.drought1.shift(abs(tau))
+    df = df.dropna()
+
+    x_test =  df.iloc[:,1].values
+    y_test = df.iloc[:,0].values
+    x_test  = x_test.reshape(-1, 1)
+    y_test  = y_test.reshape(-1, 1)
+
+    y_pred = base_model.predict(x_test)
+    return(mean_squared_error(y_pred, y_test))
+
+def granger_generator(ts, count, test_type = "all", tau_min = 1, tau_max = 12,level = 0.05):
+    result_extremes = np.array(count)
+    result_extremes = result_extremes.reshape((-1,1))
+    componenet = []
+    lag = []
+    result_sst = np.array(ts)
+    
+    for i in range(result_sst.shape[1]):
+        sst = result_sst[:,i].reshape((-1,1))
+        data = np.concatenate((result_extremes,sst), axis=1)
+        data = np.array(data)
+        df = pd.DataFrame(data)
+        lag_range = range(tau_min, tau_max+1)
+        r = grangercausalitytests(df,maxlag=lag_range,  verbose=False)
+        p = np.zeros(4)
+        for j in lag_range:
+            p[0] = r[j][0]['lrtest'][1]
+            p[1] = r[j][0]['params_ftest'][1]
+            p[2] = r[j][0]['ssr_chi2test'][1]
+            p[3] = r[j][0]['ssr_ftest'][1]
+            
+            
+            if test_type == "all" and np.all(p < level):
+                componenet.append(i+1)
+                lag.append(-j)
+            elif test_type == 'lrtest' and p[0] < level:
+                componenet.append(i+1)
+                lag.append(-j)
+            elif test_type == 'params_ftest' and p[1] < level:
+                componenet.append(i+1)
+                lag.append(-j)
+            elif test_type == 'ssr_chi2test' and p[2] < level:
+                componenet.append(i+1)
+                lag.append(-j)
+            elif test_type == 'ssr_ftest' and p[3] < level:
+                componenet.append(i+1)
+                lag.append(-j)
+            
+    link = np.array(list(zip((componenet),(lag))))    
+    return(link)
+
 
