@@ -13,6 +13,7 @@ import tigramite.data_processing as pp
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error
 from sklearn.cluster import AgglomerativeClustering
+from scipy import stats
 #import pyximport
 #pyximport.install()
 
@@ -667,20 +668,10 @@ def model_result_cluster(count, data_sst, best_link, df_sst, model, tau=-1, n_es
     else:
         return(np.nan)
 
-def crosscorr(datax, datay, lag=0):
-    """ Lag-N cross correlation. 
-    Parameters
-    ----------
-    lag : int, default 0
-    datax, datay : pandas.Series objects of equal length
-
-    Returns
-    ----------
-    crosscorr : float
-    """
-    return datax.corr(datay.shift(lag))
+def crosscorr(datax, datay, lag=1):   
+    return(stats.pearsonr(datax[lag:], datay[:-lag]))
         
-def corr_generator(ts, count, tau_max = 12, percentile = 95):
+def corr_generator(ts, count, tau_min = 1, tau_max = 12, level = 0.05):
     result_extremes = np.array(count)
     result_extremes = result_extremes.reshape((-1,1))
 
@@ -688,20 +679,22 @@ def corr_generator(ts, count, tau_max = 12, percentile = 95):
 
     data = np.concatenate((result_extremes,result_sst), axis=1)
     data = np.array(data)
-    df = pd.DataFrame(data)
 
-    N = df.shape[1]-1
-    result = np.zeros((tau_max,N))
+    N = data.shape[1]-1
+    result = np.zeros((tau_max - tau_min + 1,N))
 
     for j in range(1,N):
-        xcov_monthly = [crosscorr(df[0],df[j],lag=i) for i in range(1,tau_max + 1)]
-        result[:,j] = xcov_monthly
+        for i in range(tau_min,tau_max + 1):
+            r, pvalue = crosscorr(data[:,0],data[:,j],lag=i)
+            result[i-tau_min,j] = r if pvalue < level else 0
       
     result = np.abs(result)
-    limit = np.percentile(result, percentile)
-    Index = np.where(result >= limit)
-    link = np.array(list(zip((Index[1]+1),(Index[0] + 1)*(-1))))    
-    return(link)
+    #limit = np.percentile(result, percentile)
+    limit = 0
+    Index = np.where(result > limit)
+    link = np.array(list(zip((Index[1]+1),(Index[0] + tau_min)*(-1)))) 
+    result = result[Index]
+    return(link[(-result).argsort()])
 
 def clustering_computer(file_name, code, temporal_limits,n_components_sst=76, missing_value=-9.96921e+36):
     sst = Data(file_name,code,temporal_limits, missing_value= missing_value)
