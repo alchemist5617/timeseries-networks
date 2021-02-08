@@ -14,10 +14,29 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error
 from sklearn.cluster import AgglomerativeClustering
 from scipy import stats
+import numpy.ma as ma
 #import pyximport
 #pyximport.install()
 
 #import tigramite_cython_code
+
+def data_list_maker_V(data_sst, V, link):
+    df = pd.DataFrame()
+    for k in range(len(link)):
+        df[str(k)] = time_series_maker_V(data_sst, V[:,link[k,0]-1])
+        df[str(k)] = df[str(k)].shift(abs(link[k,1]))
+    df = df.dropna()
+    return(df)
+
+def data_list_maker(data_sst, df_sst, V, link):
+    df = pd.DataFrame()
+    for k in range(len(link)):
+        df_sst["pc"] = V[:,link[k,0]-1]
+        df[str(k)] = time_series_maker(link[k,0]-1, df_sst, data_sst)
+        df[str(k)] = df[str(k)].shift(abs(link[k,1]))
+    df = df.dropna()
+    return(df)
+
 
 def shift_df(df, start_lag = 1, end_lag = 12):
     lags = np.arange(start_lag,end_lag + 1)
@@ -671,7 +690,7 @@ def model_result_cluster(count, data_sst, best_link, df_sst, model, tau=-1, n_es
 def crosscorr(datax, datay, lag=1):   
     return(stats.pearsonr(datax[lag:], datay[:-lag]))
         
-def corr_generator(ts, count, tau_min = 1, tau_max = 12, level = 0.05):
+def corr_generator(ts, count, V, tau_min = 1, tau_max = 12, level = 0.05):
     result_extremes = np.array(count)
     result_extremes = result_extremes.reshape((-1,1))
 
@@ -694,7 +713,29 @@ def corr_generator(ts, count, tau_min = 1, tau_max = 12, level = 0.05):
     Index = np.where(result > limit)
     link = np.array(list(zip((Index[1]+1),(Index[0] + tau_min)*(-1)))) 
     result = result[Index]
-    return(link[(-result).argsort()])
+    link = link[(-result).argsort()]
+    
+    df = data_list_maker_V(result_sst, V, link)
+    deleted_index = []
+    componenets = set(link[:,0])
+    for componenet in componenets:
+        componenet_index = (link[:,0] == componenet)
+        componenet_list = link[componenet_index]
+        Index = componenet_index.nonzero()[0]
+        sorted_index = np.argsort(componenet_list[:,1],axis=0)
+        mx = ma.masked_array(componenet_list)
+        for i in range(len(sorted_index)):
+            if ma.is_masked(mx[sorted_index[i]]): continue
+            for j in range(i+1,len(sorted_index)):
+                if (not ma.is_masked(mx[sorted_index[i]]) and (df.iloc[:,Index[sorted_index[i]]].corr(df.iloc[:,Index[sorted_index[j]]]) > 0.8)):
+                    mx[sorted_index[j]] = ma.masked
+
+        if not np.isscalar(mx.mask):
+            deleted_index.extend(Index[mx.mask[:,0].nonzero()[0]])
+    deleted_index = np.array(deleted_index)
+    link = np.delete(link,deleted_index,axis=0)    
+    
+    return(link)
 
 def clustering_computer(file_name, code, temporal_limits,n_components_sst=76, missing_value=-9.96921e+36):
     sst = Data(file_name,code,temporal_limits, missing_value= missing_value)
