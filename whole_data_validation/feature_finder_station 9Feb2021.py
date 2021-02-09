@@ -32,16 +32,6 @@ def data_list_maker(data_sst, df_sst, V, link):
         df[str(k)] = df[str(k)].shift(abs(link[k,1]))
     df = df.dropna()
     return(df)
-    
-def shift_df(df, start_lag = 1, end_lag = 12):
-    lags = np.arange(start_lag,end_lag + 1)
-    df = df.assign(**{
-    '{} (t-{})'.format(col, t): df[col].shift(t)
-    for t in lags
-    for col in df
-    })
-    df = df.dropna()
-    return(df)
 
 def number_non_random(data):
     """Assumes data of shape (N, T)"""   
@@ -110,7 +100,7 @@ def data_generator_avg_std(file_name, code, temporal_limits, avgs, stds, freq = 
                 r[Idx] = (temp[Idx] - avgs[i,j])/stds[i,j]
         data_deseasonal[:,i] = np.copy(r)
     
-    #data_deseasonal = difference(data_deseasonal)  
+    data_deseasonal = difference(data_deseasonal)  
     weights = np.sqrt(np.abs(np.cos(np.array(lat_sst_list)* math.pi/180)))
     for i in range(len(weights)):
         data_deseasonal[:,i] = weights[i] * data_deseasonal[:,i]
@@ -262,19 +252,11 @@ def time_series_maker(pc, df_sst, result, level = 95):
 
     d = result[:,I].mean(axis=1)
     d = np.ravel(d)
+    #d = np.reshape(d,(-1,1))
+    #d = pf.deseasonalize(d)
+    #d = np.ravel(d)
     return(d)
 
-def feature_score(base, feature,ratio= 0.8, n_estimators=100, max_depth=5):
-    df = pd.concat([base, feature],axis=1)
-    index = int(df.shape[0]*ratio)
-
-    x_train, x_test = df.iloc[:index,1:], df.iloc[index:,1:]
-    y_train, y_test = df.iloc[:index,0], df.iloc[index:,0]
-    model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
-    model.fit(x_train, y_train)
-    y_pred = model.predict(x_test)
-    return(mean_squared_error(y_pred, y_test))
-    
 def time_series_maker_V(data, V_value):
     return(np.ravel(np.matmul(data,V_value)))
     
@@ -283,125 +265,193 @@ def time_series_maker_cluster(result, df_sst, cluster):
     d = result[:,Idx].mean(axis=1)
     d = np.ravel(d)
     return(d)
- 
-def forward_feature_V(count, data_sst, link, V, tau,  ratio = 0.8, n_estimators=100, max_depth=5):
+        
+def min_MSE_finder_V(count, result_sst, link, df_sst, V, ratio=0.8, tau=-1, n_estimators=100, max_depth=5):
     result = []
-    link_list = []
-    start_lag = tau
-    end_lag = tau + 12
-    df = pd.DataFrame({"drought":count})
-    
-    df = shift_df(df, start_lag, end_lag)
+#    link = link[link[:,1] <= tau]
+
+    df = pd.DataFrame({"drought":count, "drought1":count})
+    df.drought1 = df.drought1.shift(abs(tau))
+    df = df.dropna()
     index = int(df.shape[0]*ratio)
     dim = df.shape[1]
-    x_train, x_test = df.iloc[:index,1:dim], df.iloc[index:,1:dim]
-    y_train, y_test = df.iloc[:index,0], df.iloc[index:,0]
+    #index +=tau
+
+    x_train, x_test = df.iloc[:index,1:dim], df.iloc[index:,1:dim] 
+    y_train, y_test = df.iloc[:index,0], df.iloc[index:,0] 
+    model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
+    model.fit(x_train, y_train)
+    y_pred = model.predict(x_test)
+    result.append(mean_squared_error(y_pred, y_test))
+
+
+    for z in range(len(link)):
+        df = pd.DataFrame({"drought":count, "drought1":count})
+        df.drought1 = df.drought1.shift(abs(tau))
+        for k in range(0,z+1):
+                df_sst["pc"] = V[:,link[k,0]-1]
+                df[str(k)] = time_series_maker_V(result_sst, V[:,link[k,0]-1])
+                df[str(k)] = df[str(k)].shift(abs(link[k,1]))
+        df = df.dropna()
+        index = int(df.shape[0]*ratio)
+        #dim = df.shape[1]
+        #index +=tau
+        
+        x_train, x_test = df.iloc[:index,1:], df.iloc[index:,1:] 
+        y_train, y_test = df.iloc[:index,0], df.iloc[index:,0] 
+        model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
+        model.fit(x_train, y_train)
+        y_pred = model.predict(x_test)
+        result.append(mean_squared_error(y_pred, y_test))
+    return(result,link)
+    
+def min_MSE_finder(count, result_sst, link, df_sst, V, ratio=0.8, tau=-1, n_estimators=100, max_depth=5):
+    result = []
+    link = link[link[:,1] <= tau]
+
+    df = pd.DataFrame({"drought":count, "drought1":count})
+    df.drought1 = df.drought1.shift(abs(tau))
+    df = df.dropna()
+    index = int(df.shape[0]*ratio)
+    dim = df.shape[1]
+    
+
+    x_train, x_test = df.iloc[:index,1:dim], df.iloc[index:,1:dim] 
+    y_train, y_test = df.iloc[:index,0], df.iloc[index:,0] 
+    model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
+    model.fit(x_train, y_train)
+    y_pred = model.predict(x_test)
+    result.append(mean_squared_error(y_pred, y_test))
+
+
+    for z in range(len(link)):
+        df = pd.DataFrame({"drought":count, "drought1":count})
+        df.drought1 = df.drought1.shift(abs(tau))
+        for k in range(0,z+1):
+                df_sst["pc"] = V[:,link[k,0]-1]
+                df[str(k)] = time_series_maker(link[k,0]-1, df_sst, result_sst)
+                df[str(k)] = df[str(k)].shift(abs(link[k,1]))
+        df = df.dropna()
+        index = int(df.shape[0]*ratio)
+        #dim = df.shape[1]
+        #index +=tau
+        
+        x_train, x_test = df.iloc[:index,1:], df.iloc[index:,1:] 
+        y_train, y_test = df.iloc[:index,0], df.iloc[index:,0] 
+        model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
+        model.fit(x_train, y_train)
+        y_pred = model.predict(x_test)
+        result.append(mean_squared_error(y_pred, y_test))
+    return(result,link)
+
+    
+def best_link_finder(count, data_sst, link, df_sst, V, ratio=0.8, tau=-1, n_estimators=100, max_depth=5):
+    
+    result, link = min_MSE_finder(count, data_sst, link, df_sst, V, ratio, tau)
+    
+    overall_min_MSE = []
+    overall_min_MSE.append(min(result))
+    
+    link_list = []
+    diff = [x - result[i - 1] for i, x in enumerate(result)][1:]
+    refined_index = np.array(diff) < 0 
+    while not all(refined_index):
+        link_list.append(link)
+        link = link[refined_index,:]
+        result, link = min_MSE_finder(count, data_sst, link,df_sst, V, ratio, tau)
+        overall_min_MSE.append(min(result))
+        diff = [x - result[i - 1] for i, x in enumerate(result)][1:]
+        refined_index = np.array(diff) < 0
+
+    df = pd.DataFrame({"drought":count, "drought1":count})
+    df.drought1 = df.drought1.shift(abs(tau))
+    df = df.dropna()
+    #index +=tau
+
+    x_train =  df.iloc[:,1:].values
+    y_train = df.iloc[:,0].values
+    x_train  = x_train.reshape(-1, 1)
+    y_train  = y_train.reshape(-1, 1)
     base_model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
     base_model.fit(x_train, y_train)
-    y_pred = base_model.predict(x_test)
-    result.append(mean_squared_error(y_pred, y_test))
-    
-    df = pd.DataFrame({"drought": count})
-    lags = np.arange(start_lag,end_lag + 1)
-    df = df.assign(**{
-    '{} (t-{})'.format(col, t): df[col].shift(t)
-    for t in lags
-    for col in df
-    })
-    for k in range(len(link)):
-        df[str(k)] = time_series_maker_V(data_sst, V[:,link[k,0]-1])
-        df[str(k)] = df[str(k)].shift(abs(link[k,1]))
-    df = df.dropna()
-    
-    base = df.iloc[:,:14].copy()
-    features = df.iloc[:,14:].copy()
-    
-    while features.shape[1]>0:
-        min_mse = np.Inf
-        min_index = 0
-        for c in features.columns:
-            mse = feature_score(base, features[c])
-            if (result[-1] > mse) and (min_mse > mse):
-                min_mse = mse
-                min_index = c
-        if isinstance(min_index, int): break
-        result.append(min_mse)
-        base = pd.concat([base, features[min_index]],axis=1)
-        features = features.drop(min_index,1)
-        link_list.append(link[int(min_index)])
-            
-    if len(link_list) > 0:        
-        x_train = base.iloc[:,1:]
-        y_train = base.iloc[:,0]
+        
+    if len(link_list) > 0:
+        best_index = np.where(np.array(overall_min_MSE) == np.array(overall_min_MSE).min())[0][-1]
+        best_link = link_list[best_index-1]
+                    
+        df = pd.DataFrame({"drought":count, "drought1":count})
+        df.drought1 = df.drought1.shift(abs(tau))
+        for k in range(len(best_link)):
+            df_sst["pc"] = V[:,best_link[k,0]-1]
+            df[str(k)] = time_series_maker(best_link[k,0]-1, df_sst, data_sst)
+            df[str(k)] = df[str(k)].shift(abs(best_link[k,1]))
+        df = df.dropna()
+        #index +=tau
+        
+        x_train = df.iloc[:,1:]
+        y_train = df.iloc[:,0]
         model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
         model.fit(x_train, y_train)
     else:
         model = base_model
-        link_list = []
-    
-    return(np.array(link_list),base_model, model)
+        best_link = []
 
-def forward_feature(count, data_sst, df_sst, link, V, tau, ratio = 0.8, n_estimators=100, max_depth=5 ):
-    result = []
-    link_list = []
-    start_lag = tau
-    end_lag = tau + 12
-    df = pd.DataFrame({"drought":count})
+    return(best_link, base_model, model)
+
+
+def best_link_finder_V(count, data_sst, link, df_sst, V, tau=-1, ratio=0.8, n_estimators=100, max_depth=5):
     
-    df = shift_df(df, start_lag, end_lag)
-    index = int(df.shape[0]*ratio)
-    dim = df.shape[1]
-    x_train, x_test = df.iloc[:index,1:dim], df.iloc[index:,1:dim]
-    y_train, y_test = df.iloc[:index,0], df.iloc[index:,0]
+    result, link = min_MSE_finder_V(count, data_sst, link, df_sst, V, ratio, tau)
+    
+    overall_min_MSE = []
+    overall_min_MSE.append(min(result))
+    
+    link_list = []
+    diff = [x - result[i - 1] for i, x in enumerate(result)][1:]
+    refined_index = np.array(diff) < 0 
+    while not all(refined_index):
+        link_list.append(link)
+        link = link[refined_index,:]
+        result, link = min_MSE_finder_V(count, data_sst, link, df_sst, V, ratio, tau)
+        overall_min_MSE.append(min(result))
+        diff = [x - result[i - 1] for i, x in enumerate(result)][1:]
+        refined_index = np.array(diff) < 0
+        
+    df = pd.DataFrame({"drought":count, "drought1":count})
+    df.drought1 = df.drought1.shift(abs(tau))
+    df = df.dropna()
+    #index +=tau
+
+    x_train =  df.iloc[:,1:].values
+    y_train = df.iloc[:,0].values
+    x_train  = x_train.reshape(-1, 1)
+    y_train  = y_train.reshape(-1, 1)
     base_model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
     base_model.fit(x_train, y_train)
-    y_pred = base_model.predict(x_test)
-    result.append(mean_squared_error(y_pred, y_test))
     
-    df = pd.DataFrame({"drought":count})
-    lags = np.arange(start_lag,end_lag + 1)
-    df = df.assign(**{
-    '{} (t-{})'.format(col, t): df[col].shift(t)
-    for t in lags
-    for col in df
-    })
-    for k in range(len(link)):
-        df_sst["pc"] = V[:,link[k,0]-1]
-        df[str(k)] = time_series_maker(link[k,0]-1, df_sst, data_sst)
-        df[str(k)] = df[str(k)].shift(abs(link[k,1]))
-    df = df.dropna()
-    
-    base = df.iloc[:,:14].copy()
-    features = df.iloc[:,14:].copy()
-    
-    while features.shape[1]>0:
-        min_mse = np.Inf
-        min_index = 0
-        for c in features.columns:
-            mse = feature_score(base, features[c])
-            if (result[-1] > mse) and (min_mse > mse):
-                min_mse = mse
-                min_index = c
-        if isinstance(min_index, int): break
-        result.append(min_mse)
-        base = pd.concat([base, features[min_index]],axis=1)
-        features = features.drop(min_index,1)
-        link_list.append(link[int(min_index)])
+    if len(link_list) > 0:
+        best_index = np.where(np.array(overall_min_MSE) == np.array(overall_min_MSE).min())[0][-1]
+        best_link = link_list[best_index-1]
+           
+        df = pd.DataFrame({"drought":count, "drought1":count})
+        df.drought1 = df.drought1.shift(abs(tau))
+        for k in range(len(best_link)):
+            df_sst["pc"] = V[:,best_link[k,0]-1]
+            df[str(k)] = time_series_maker_V(data_sst, V[:,best_link[k,0]-1])
+            df[str(k)] = df[str(k)].shift(abs(best_link[k,1]))
+        df = df.dropna()
+        #index +=tau
         
-        
-    if len(link_list) > 0:        
-        x_train = base.iloc[:,1:]
-        y_train = base.iloc[:,0]
+        x_train = df.iloc[:,1:]
+        y_train = df.iloc[:,0]
         model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
         model.fit(x_train, y_train)
     else:
         model = base_model
-        link_list = []
+        best_link = []
+
+    return(best_link, base_model, model)
     
-    return(np.array(link_list),base_model, model)       
-
-
-
 def min_MSE_finder_cluster(count, result_sst, link, df_sst, ratio=0.8, tau=-1, n_estimators=100, max_depth=5):
     result = []
     link = link[link[:,1] <= tau]
@@ -503,67 +553,66 @@ def addtrend(initial, diff):
         original.append(original[i] + diff[i].item())
     return(original)
 
-def base_model_result(count, base_model, link, tau=-1):
-    start_lag = tau
-    end_lag = tau + 12
-    df = pd.DataFrame({"drought":count})
-    df = shift_df(df, start_lag, end_lag)
+def base_model_result(original_count, count, base_model, best_link, tau=-1):
+    df = pd.DataFrame({"drought":count, "drought1":count})
+    df.drought1 = df.drought1.shift(abs(tau))
+    df = df.dropna()
 
-    x_test =  df.iloc[:,1:].values
-    y_test = df.iloc[:,0].values
+    if len(best_link) > 0:
+        best_link = np.array(best_link)
+        start = np.abs(best_link[:,1].min() - tau)
+    else:
+        start = 0    
+
+    x_test =  df.iloc[start:,1].values
+    y_test = df.iloc[start:,0].values
+    x_test  = x_test.reshape(-1, 1)
+    y_test  = y_test.reshape(-1, 1)
 
     y_pred = base_model.predict(x_test)
-    
+    y_pred = addtrend(original_count[np.abs(tau)+start], np.ravel(y_pred))
+    y_test = addtrend(original_count[np.abs(tau)+start], np.ravel(y_test))
     return(mean_squared_error(y_pred, y_test))
 
-def model_result(count, data_sst, link, df_sst, V,model, tau=-1, n_estimators=100, max_depth=5):
-    if len(link) > 0:
-        start_lag = tau
-        end_lag = tau + 12
-
-        df = pd.DataFrame({"drought":count})
-        lags = np.arange(start_lag,end_lag + 1)
-        df = df.assign(**{
-        '{} (t-{})'.format(col, t): df[col].shift(t)
-        for t in lags
-        for col in df
-        })
-        for k in range(len(link)):
-            df_sst["pc"] = V[:,link[k,0]-1]
-            df[str(k)] = time_series_maker(link[k,0]-1, df_sst, data_sst)
-            df[str(k)] = df[str(k)].shift(abs(link[k,1]))
+def model_result(original_count, count, data_sst, best_link, df_sst, V,model, tau=-1, n_estimators=100, max_depth=5):
+    if len(best_link) > 0:
+        df = pd.DataFrame({"drought":count, "drought1":count})
+        df.drought1 = df.drought1.shift(abs(tau))
+        for k in range(len(best_link)):
+            df_sst["pc"] = V[:,best_link[k,0]-1]
+            df[str(k)] = time_series_maker(best_link[k,0]-1, df_sst, data_sst)
+            df[str(k)] = df[str(k)].shift(abs(best_link[k,1]))
         df = df.dropna()
-
+    
+    
         x_test = df.iloc[:,1:]
         y_test = df.iloc[:,0]
-
+    
         y_pred = model.predict(x_test)
+        y_pred = addtrend(original_count[np.abs(best_link[:,1].min())], np.ravel(y_pred))
+        y_test = addtrend(original_count[np.abs(best_link[:,1].min())], np.ravel(y_test.values))
         return(mean_squared_error(y_pred, y_test))
     else:
         return(np.nan)
+#def time_series_maker_V(data, V_value):
+#    d = difference(np.ravel(np.matmul(data,V_value)))
+#    return(d)
 
-def model_result_V(count, data_sst, link, df_sst, V, model, tau=-1, n_estimators=100, max_depth=5): 
-    if len(link) > 0:
-        start_lag = tau
-        end_lag = tau + 12
-
-        df = pd.DataFrame({"drought":count})
-        lags = np.arange(start_lag,end_lag + 1)
-        df = df.assign(**{
-        '{} (t-{})'.format(col, t): df[col].shift(t)
-        for t in lags
-        for col in df
-        })
-        for k in range(len(link)):
-            df[str(k)] = time_series_maker_V(data_sst, V[:,link[k,0]-1])
-            df[str(k)] = df[str(k)].shift(abs(link[k,1]))
+def model_result_V(original_count, count, data_sst, best_link, df_sst, V,model, tau=-1, n_estimators=100, max_depth=5):
+    if len(best_link) > 0:
+        df = pd.DataFrame({"drought":count, "drought1":count})
+        df.drought1 = df.drought1.shift(abs(tau))
+        for k in range(len(best_link)):
+            df_sst["pc"] = V[:,best_link[k,0]-1]
+            df[str(k)] = time_series_maker_V(data_sst, V[:,best_link[k,0]-1])
+            df[str(k)] = df[str(k)].shift(abs(best_link[k,1]))
         df = df.dropna()
-
-
         x_test = df.iloc[:,1:]
         y_test = df.iloc[:,0]
-
+    
         y_pred = model.predict(x_test)
+        y_pred = addtrend(original_count[np.abs(best_link[:,1].min())], np.ravel(y_pred))
+        y_test = addtrend(original_count[np.abs(best_link[:,1].min())], np.ravel(y_test.values))
         return(mean_squared_error(y_pred, y_test))
     else:
         return(np.nan)
@@ -592,7 +641,7 @@ def model_result_cluster(original_count, count, data_sst, best_link, df_sst, mod
 def crosscorr(datax, datay, lag=1):   
     return(stats.pearsonr(datax[lag:], datay[:-lag]))
         
-def corr_generator(ts, count, V, data_sst, tau_min = 1, tau_max = 12, level = 0.05):
+def corr_generator(ts, count, V, tau_min = 1, tau_max = 12, level = 0.05):
     result_extremes = np.array(count)
     result_extremes = result_extremes.reshape((-1,1))
 
@@ -617,7 +666,7 @@ def corr_generator(ts, count, V, data_sst, tau_min = 1, tau_max = 12, level = 0.
     result = result[Index]
     link = link[(-result).argsort()]
     
-    df = data_list_maker_V(data_sst, V, link)
+    df = data_list_maker_V(result_sst, V, link)
     deleted_index = []
     componenets = set(link[:,0])
     for componenet in componenets:
