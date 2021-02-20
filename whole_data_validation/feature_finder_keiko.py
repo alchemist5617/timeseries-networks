@@ -15,6 +15,11 @@ from sklearn.cluster import AgglomerativeClustering
 from scipy import signal
 from scipy import stats
 import numpy.ma as ma
+import pickle
+
+def load_obj(name):
+    with open(name + '.pkl', 'rb') as f:
+        return pickle.load(f)
 
 def data_list_maker_V(data_sst, V, link):
     df = pd.DataFrame()
@@ -77,6 +82,19 @@ def data_finder(country_code, file_name = '../../nc/precip.mon.total.2.5x2.5.v20
     ET_index = np.where(np.array(country)== country_code)[0]
     ET_data = result[:,ET_index]
     return(ET_data)
+    
+def drought_timeseries_class(file_name, index, start_year = 1922, end_year=2015, extremes_treshold = -1, base_year = 1922):
+    start_index = (start_year - base_year) * 12
+    end_index = start_index + (end_year - (start_year - 1))*12
+    ET_gamma = np.load(file_name)
+    ET_gamma = ET_gamma[:,index]
+    N = ET_gamma.shape[0]
+    count = []
+    for i in range(N):
+        count.append(np.count_nonzero(ET_gamma[i,:] <= extremes_treshold))
+    count_detrend = signal.detrend(count[start_index:end_index])
+    return(count[start_index:end_index], count_detrend)
+
     
 def drought_timeseries(file_name, start_year = 1922, end_year=2015, extremes_treshold = -1, base_year = 1922):
     start_index = (start_year - base_year) * 12
