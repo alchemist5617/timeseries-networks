@@ -16,6 +16,7 @@ from scipy import signal
 from scipy import stats
 import numpy.ma as ma
 import pickle
+from scipy import linalg
 
 def load_obj(name):
     with open(name + '.pkl', 'rb') as f:
@@ -358,6 +359,37 @@ def forward_feature_V(count, data_sst, link, V, tau,  ratio = 0.8, n_estimators=
         link_list = []
     
     return(np.array(link_list),base_model, model)
+    
+def model_generator_V(count, data_sst, link, V, tau, ratio = 0.8, n_estimators=100, max_depth=5):
+    
+    start_lag = tau
+    end_lag = tau+12
+    
+    df = pd.DataFrame({"drought":count})
+    df = shift_df(df, start_lag, end_lag)
+    x_train = df.iloc[:,1:]
+    y_train = df.iloc[:,0]
+    base_model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
+    base_model.fit(x_train, y_train)        
+            
+    df = pd.DataFrame({"drought": count})
+    lags = np.arange(start_lag,end_lag + 1)
+    df = df.assign(**{
+    '{} (t-{})'.format(col, t): df[col].shift(t)
+    for t in lags
+    for col in df
+    })
+    for k in range(len(link)):
+        df[str(k)] = time_series_maker_V(data_sst, V[:,link[k,0]-1])
+        df[str(k)] = df[str(k)].shift(abs(link[k,1]))
+    df = df.dropna()
+        
+    x_train = df.iloc[:,1:]
+    y_train = df.iloc[:,0]
+    model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
+    model.fit(x_train, y_train)
+        
+    return(base_model, model)
 
 def forward_feature(count, data_sst, df_sst, link, V, tau, ratio = 0.8, n_estimators=100, max_depth=5 ):
     result = []
@@ -741,5 +773,62 @@ def granger_generator(ts, count, test_type = "all", tau_min = 1, tau_max = 12,le
     link = np.array(list(zip((componenet),(lag))))    
     return(link)
 
+def prod(iterable):
+    """
+    Product of a sequence of numbers.
+    Faster than np.prod for short lists like array shapes, and does
+    not overflow if using Python integers.
+    """
+    product = 1
+    for x in iterable:
+        product *= x
+    return product
 
+def detrend(data, axis=-1, type='linear', bp=0, overwrite_data=False):
+    
+    if type not in ['linear', 'l', 'constant', 'c']:
+        raise ValueError("Trend type must be 'linear' or 'constant'.")
+    data = np.asarray(data)
+    dtype = data.dtype.char
+    if dtype not in 'dfDF':
+        dtype = 'd'
+    if type in ['constant', 'c']:
+        ret = data - np.expand_dims(np.mean(data, axis), axis)
+        return ret
+    else:
+        dshape = data.shape
+        N = dshape[axis]
+        bp = np.sort(np.unique(np.r_[0, bp, N]))
+        if np.any(bp > N):
+            raise ValueError("Breakpoints must be less than length "
+                             "of data along given axis.")
+        Nreg = len(bp) - 1
+        # Restructure data so that axis is along first dimension and
+        #  all other dimensions are collapsed into second dimension
+        rnk = len(dshape)
+        if axis < 0:
+            axis = axis + rnk
+        newdims = np.r_[axis, 0:axis, axis + 1:rnk]
+        newdata = np.reshape(np.transpose(data, tuple(newdims)),
+                             (N, prod(dshape) // N))
+        nd = newdata.copy()
+        if not overwrite_data:
+            newdata = newdata.copy()  # make sure we have a copy
+        if newdata.dtype.char not in 'dfDF':
+            newdata = newdata.astype(dtype)
+        # Find leastsq fit and remove it for each piece
+        for m in range(Nreg):
+            Npts = bp[m + 1] - bp[m]
+            A = np.ones((Npts, 2), dtype)
+            A[:, 0] = np.cast[dtype](np.arange(1, Npts + 1) * 1.0 / Npts)
+            sl = slice(bp[m], bp[m + 1])
+            coef, resids, rank, s = linalg.lstsq(A, newdata[sl])
+            newdata[sl] = newdata[sl] - np.dot(A, coef)
+        # Put data back in original shape.
+        tdshape = np.take(dshape, newdims, 0)
+        ret = np.reshape(newdata, tuple(tdshape))
+        vals = list(range(1, rnk))
+        olddims = vals[:axis] + [0] + vals[axis:]
+        ret = np.transpose(ret, tuple(olddims))
+        return(ret, coef)
 
