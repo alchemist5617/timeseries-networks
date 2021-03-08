@@ -17,10 +17,15 @@ from scipy import stats
 import numpy.ma as ma
 import pickle
 from scipy import linalg
+from statsmodels.tsa.stattools import grangercausalitytests
 
 def load_obj(name):
     with open(name + '.pkl', 'rb') as f:
         return pickle.load(f)
+
+def save_obj(obj, name ):
+    with open(name + '.pkl', 'wb') as f:
+        pickle.dump(obj, f, pickle.HIGHEST_PROTOCOL)
 
 def data_list_maker_V(data_sst, V, link):
     df = pd.DataFrame()
@@ -164,7 +169,7 @@ def PCA_computer(file_name, code, temporal_limits,n_components_sst=76, missing_v
     lat_sst_list = sst.get_lat_list()
 
     result_sst, avgs, stds = pf.deseasonalize_avg_std(np.array(result))
-    result_sst = difference(result_sst)
+    #result_sst = difference(result_sst)
     weights = np.sqrt(np.abs(np.cos(np.array(lat_sst_list)* math.pi/180)))
     for i in range(len(weights)):
         result_sst[:,i] = weights[i] * result_sst[:,i]
@@ -235,7 +240,7 @@ def PCA_computer_rotated(file_name, code, temporal_limits,n_components_sst=98, m
     
     return(result_sst, comps_ts, Vr, df_sst, avgs, stds)
     
-def PCMCI_generator(ts, count, tau_min = 0, tau_max = 12, alpha_level = 0.05):
+def PCMCI_generator(ts, count, tau_min = 0, tau_max = 12, alpha_level = 0.05, save=False, file_name="PCMCI_results"):
     result_extremes = np.array(count)
     result_extremes = result_extremes.reshape((-1,1))
     
@@ -249,6 +254,8 @@ def PCMCI_generator(ts, count, tau_min = 0, tau_max = 12, alpha_level = 0.05):
     pcmci = PCMCI(dataframe=dataframe, cond_ind_test=cond_ind_test)
 
     results = pcmci.run_pcmci(tau_min=tau_min, tau_max=tau_max, pc_alpha=None)
+    if save: 
+        save_obj(results, file_name)
     
     pq_matrix = results['p_matrix']
     val_matrix = results['val_matrix']
