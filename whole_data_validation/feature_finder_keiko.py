@@ -839,3 +839,33 @@ def detrend(data, axis=-1, type='linear', bp=0, overwrite_data=False):
         ret = np.transpose(ret, tuple(olddims))
         return(ret, coef)
 
+def model_generator_V(count, data_sst, link, V, tau, ratio = 0.8, n_estimators=100, max_depth=5):
+    
+    start_lag = tau
+    end_lag = tau+12
+    
+    df = pd.DataFrame({"drought":count})
+    df = ff.shift_df(df, start_lag, end_lag)
+    x_train = df.iloc[:,1:]
+    y_train = df.iloc[:,0]
+    base_model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
+    base_model.fit(x_train, y_train)        
+            
+    df = pd.DataFrame({"drought": count})
+    lags = np.arange(start_lag,end_lag + 1)
+    df = df.assign(**{
+    '{} (t-{})'.format(col, t): df[col].shift(t)
+    for t in lags
+    for col in df
+    })
+    for k in range(len(link)):
+        df[str(k)] = ff.time_series_maker_V(data_sst, V[:,link[k,0]-1])
+        df[str(k)] = df[str(k)].shift(abs(link[k,1]))
+    df = df.dropna()
+        
+    x_train = df.iloc[:,1:]
+    y_train = df.iloc[:,0]
+    model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
+    model.fit(x_train, y_train)
+        
+    return(base_model, model)
