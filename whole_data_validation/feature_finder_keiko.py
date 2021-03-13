@@ -845,7 +845,7 @@ def model_generator_V(count, data_sst, link, V, tau, ratio = 0.8, n_estimators=1
     end_lag = tau+12
     
     df = pd.DataFrame({"drought":count})
-    df = ff.shift_df(df, start_lag, end_lag)
+    df = shift_df(df, start_lag, end_lag)
     x_train = df.iloc[:,1:]
     y_train = df.iloc[:,0]
     base_model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
@@ -859,7 +859,7 @@ def model_generator_V(count, data_sst, link, V, tau, ratio = 0.8, n_estimators=1
     for col in df
     })
     for k in range(len(link)):
-        df[str(k)] = ff.time_series_maker_V(data_sst, V[:,link[k,0]-1])
+        df[str(k)] = time_series_maker_V(data_sst, V[:,link[k,0]-1])
         df[str(k)] = df[str(k)].shift(abs(link[k,1]))
     df = df.dropna()
         
