@@ -240,7 +240,56 @@ def PCA_computer_rotated(file_name, code, temporal_limits,n_components_sst=98, m
     
     return(result_sst, comps_ts, Vr, df_sst, avgs, stds)
     
-def PCMCI_generator(ts, count, tau_min = 0, tau_max = 12, alpha_level = 0.05, save=False, file_name="PCMCI_results"):
+def PCA_computer_rotated_mean(file_name, code, temporal_limits,n_components_sst=98, missing_value=-9.96921e+36):
+    sst = Data(file_name,code,temporal_limits, missing_value= missing_value)
+
+    result = sst.get_data()
+    lon_sst_list = sst.get_lon_list()
+    lat_sst_list = sst.get_lat_list()
+
+    result_sst, avgs, stds = pf.deseasonalize_avg_std(np.array(result))
+    result_sst = signal.detrend(result_sst, axis=0)
+    weights = np.sqrt(np.abs(np.cos(np.array(lat_sst_list)* math.pi/180)))
+    for i in range(len(weights)):
+        result_sst[:,i] = weights[i] * result_sst[:,i]
+
+    data_sst = pd.DataFrame(result_sst)
+        
+    V, U, S, ts, eig, explained, max_comps = rung.pca_svd(data_sst,truncate_by='max_comps', max_comps=n_components_sst)
+    
+    Vr, Rot = rung.varimax(V)
+    Vr = rung.svd_flip(Vr)
+
+    # Get explained variance of rotated components
+    s2 = np.diag(S)**2 / (ts.shape[0] - 1.)
+
+    # matrix with diagonal containing variances of rotated components
+    S2r = np.dot(np.dot(np.transpose(Rot), np.matrix(np.diag(s2))), Rot)
+    expvar = np.diag(S2r)
+
+    sorted_expvar = np.sort(expvar)[::-1]
+    # s_orig = ((Vt.shape[1] - 1) * s2) ** 0.5
+
+    # reorder all elements according to explained variance (descending)
+    nord = np.argsort(expvar)[::-1]
+    Vr = Vr[:, nord]
+
+    df_sst = pd.DataFrame({"lons":lon_sst_list,"lats":lat_sst_list})
+
+    lon_temp = df_sst["lons"].values
+    lon_temp[lon_temp > 180] = lon_temp[lon_temp > 180] -360
+    df_sst["lons"].vlues = lon_temp
+    
+    # Get time series of UNMASKED data
+    comps_ts = np.matmul(np.array(data_sst),Vr)
+    
+    for i in range(n_components_sst):
+        df_sst["pc"] = V[:,i]
+        comps_ts[:,i] = time_series_maker(i, df_sst, result_sst)
+    
+    return(result_sst, comps_ts, Vr, df_sst, avgs, stds)
+    
+def PCMCI_generator(ts, count, tau_min = 1, tau_max = 12, alpha_level = 0.05, save=False, file_name="PCMCI_results"):
     result_extremes = np.array(count)
     result_extremes = result_extremes.reshape((-1,1))
     
@@ -276,7 +325,7 @@ def PCMCI_generator(ts, count, tau_min = 0, tau_max = 12, alpha_level = 0.05, sa
     link = link[link[:,0] != 0,:]
     return(link)
     
-def time_series_maker(pc, df_sst, result, level = 95): 
+def time_series_maker(pc, df_sst, result, level = 99): 
     if np.abs(df_sst.pc.values.min()) > np.abs(df_sst.pc.values.max()):
         limit = np.percentile(df_sst.pc.values, 1 - level)
         df_sst.pc.values[df_sst.pc.values>=limit]=np.nan
@@ -289,8 +338,95 @@ def time_series_maker(pc, df_sst, result, level = 95):
     d = result[:,I].mean(axis=1)
     d = np.ravel(d)
     return(d)
+    
+def feature_score(base, feature, base_val, feature_val, n_estimators=100, max_depth=5):
+    df = pd.concat([base, feature],axis=1)
+    df_val = pd.concat([base_val, feature_val],axis=1) 
+    #index = int(df.shape[0]*ratio)
 
-def feature_score(base, feature,ratio= 0.8, n_estimators=100, max_depth=5):
+    x_train, y_train = df.iloc[:,1:], df.iloc[:,0]
+    x_val, y_val = df_val.iloc[:,1:], df_val.iloc[:,0]
+    
+    model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
+    model.fit(x_train, y_train)
+    y_pred = model.predict(x_val)
+    return(mean_squared_error(y_pred, y_val))
+
+def forward_feature(original_count, original_count_val, data_sst, data_sst_val, df_sst, link, V, tau, n_estimators=100, max_depth=5):
+    result = []
+    link_list = []
+    start_lag = tau
+    end_lag = tau + 11
+    
+    df = pd.DataFrame({"drought":original_count})
+    df = shift_df(df, start_lag, end_lag)
+
+    x_train, y_train = df.iloc[:,1:], df.iloc[:,0]
+
+    df_val = pd.DataFrame({"drought":original_count_val})
+    df_val = shift_df(df_val, start_lag, end_lag)
+
+    x_val, y_val = df_val.iloc[:,1:], df_val.iloc[:,0]
+
+    base_model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
+    base_model.fit(x_train, y_train);
+
+    y_pred = base_model.predict(x_val)
+    result.append(mean_squared_error(y_pred, y_val))
+    
+    df = pd.DataFrame({"drought": original_count})
+    lags = np.arange(start_lag,end_lag + 1)
+    df = df.assign(**{
+    '{} (t-{})'.format(col, t): df[col].shift(t)
+    for t in lags
+    for col in df
+    })
+    for k in range(len(link)):
+        df_sst["pc"] = V[:,link[k,0]-1]
+        df[str(k)] = time_series_maker(link[k,0]-1, df_sst, data_sst)
+        df[str(k)] = df[str(k)].shift(abs(link[k,1]))
+    df = df.dropna()
+    
+    
+    base = df.iloc[:,:13].copy()
+    features = df.iloc[:,13:].copy()
+
+    df_val = pd.DataFrame({"drought": original_count_val})
+    lags = np.arange(start_lag,end_lag + 1)
+    df_val = df_val.assign(**{
+    '{} (t-{})'.format(col, t): df_val[col].shift(t)
+    for t in lags
+    for col in df_val
+    })
+    for k in range(len(link)):
+        df_sst["pc"] = V[:,link[k,0]-1]
+        df_val[str(k)] = time_series_maker(link[k,0]-1, df_sst, data_sst_val)
+        df_val[str(k)] = df_val[str(k)].shift(abs(link[k,1]))
+    df_val = df_val.dropna()
+
+    base_val = df_val.iloc[:,:13].copy()
+    features_val = df_val.iloc[:,13:].copy()
+    
+    while features.shape[1]>0:
+        min_mse = np.Inf
+        min_index = 0
+        for c in features.columns:
+            mse = feature_score(base, features[c], base_val, features_val[c])
+            if (result[-1] > mse) and (min_mse > mse):
+                min_mse = mse
+                min_index = c
+        if isinstance(min_index, int): break
+        result.append(min_mse)
+        base = pd.concat([base, features[min_index]],axis=1)
+        features = features.drop(min_index,1)
+        base_val = pd.concat([base_val, features_val[min_index]],axis=1)
+        features_val = features_val.drop(min_index,1)
+        link_list.append(link[int(min_index)])
+    
+    return(np.array(link_list), result)
+
+
+def feature_score_V(base, feature,ratio= 0.8, n_estimators=100, max_depth=5):
     df = pd.concat([base, feature],axis=1)
     index = int(df.shape[0]*ratio)
 
@@ -314,7 +450,7 @@ def forward_feature_V(count, data_sst, link, V, tau,  ratio = 0.8, n_estimators=
     result = []
     link_list = []
     start_lag = tau
-    end_lag = tau + 12
+    end_lag = tau + 11
     df = pd.DataFrame({"drought":count})
     
     df = shift_df(df, start_lag, end_lag)
@@ -346,7 +482,7 @@ def forward_feature_V(count, data_sst, link, V, tau,  ratio = 0.8, n_estimators=
         min_mse = np.Inf
         min_index = 0
         for c in features.columns:
-            mse = feature_score(base, features[c])
+            mse = feature_score_V(base, features[c])
             if (result[-1] > mse) and (min_mse > mse):
                 min_mse = mse
                 min_index = c
@@ -398,7 +534,7 @@ def model_generator_V(count, data_sst, link, V, tau, ratio = 0.8, n_estimators=1
         
     return(base_model, model)
 
-def forward_feature(count, data_sst, df_sst, link, V, tau, ratio = 0.8, n_estimators=100, max_depth=5 ):
+def forward_feature_old(count, data_sst, df_sst, link, V, tau, ratio = 0.8, n_estimators=100, max_depth=5 ):
     result = []
     link_list = []
     start_lag = tau
@@ -839,10 +975,10 @@ def detrend(data, axis=-1, type='linear', bp=0, overwrite_data=False):
         ret = np.transpose(ret, tuple(olddims))
         return(ret, coef)
 
-def model_generator_V(count, data_sst, link, V, tau, ratio = 0.8, n_estimators=100, max_depth=5):
+def model_generator(count, data_sst, link, V, tau, ratio = 0.8, n_estimators=100, max_depth=5):
     
     start_lag = tau
-    end_lag = tau+12
+    end_lag = tau+11
     
     df = pd.DataFrame({"drought":count})
     df = shift_df(df, start_lag, end_lag)
