@@ -35,6 +35,14 @@ def data_list_maker_V(data_sst, V, link):
     df = df.dropna()
     return(df)
 
+def data_list_maker_cluster(data_sst, df_sst, link):
+    df = pd.DataFrame()
+    for k in range(len(link)):
+        df[str(k)] = time_series_maker_cluster(data_sst, df_sst, link[k,0]-1)
+        df[str(k)] = df[str(k)].shift(abs(link[k,1]))
+    df = df.dropna()
+    return(df)
+
 def data_list_maker(data_sst, df_sst, V, link):
     df = pd.DataFrame()
     for k in range(len(link)):
@@ -100,6 +108,12 @@ def drought_timeseries_class(file_name, index, start_year = 1922, end_year=2015,
         count.append(np.count_nonzero(ET_gamma[i,:] <= extremes_treshold))
     count_detrend = signal.detrend(count[start_index:end_index])
     return(count[start_index:end_index], count_detrend)
+    
+def spi_timeseries(file_name, start_year = 1922, end_year=2015, index = 0, base_year = 1922):
+    start_index = (start_year - base_year) * 12
+    end_index = start_index + (end_year - (start_year - 1))*12
+    ET_gamma = np.load(file_name)
+    return(ET_gamma[start_index:end_index,index])
 
     
 def drought_timeseries(file_name, start_year = 1922, end_year=2015, extremes_treshold = -1, base_year = 1922):
@@ -140,6 +154,48 @@ def data_generator_avg_std(file_name, code, temporal_limits, avgs, stds, freq = 
         data_deseasonal[:,i] = weights[i] * data_deseasonal[:,i]
     
     return(data_deseasonal) 
+    
+def data_generator_soil_avg_std(file_name, code, temporal_limits, avgs, stds, freq = 12, missing_value=-9.96921e+36):
+    sst = Data(file_name,code,temporal_limits, missing_value= missing_value)
+    result = sst.get_data()
+    lon_sst_list = sst.get_lon_list()
+    lat_sst_list = sst.get_lat_list()
+    lon = sst.get_lon()
+    lat = sst.get_lat()
+    
+    lons = np.arange(lon[0],lon[-1],2)
+    lats = np.arange(lat[0],lat[-1],-2)
+
+    INDEX = []
+    for i in range(len(lon_sst_list)):
+        if (lon_sst_list[i] in lons) and (lat_sst_list[i] in lats):
+            INDEX.append(i)
+    
+    data = result[:,INDEX]
+    lat_sst_list = np.array(lat_sst_list)[INDEX]
+    lon_sst_list = np.array(lon_sst_list)[INDEX]
+        
+    n  = data.shape[1]
+    N  = data.shape[0]
+    data_deseasonal = np.zeros(data.shape)
+    for i in range(n):
+        temp = np.copy(data[:,i])
+        temp = np.ravel(temp)
+        r = np.zeros((N))
+        for j in range(freq):
+            Idx = np.arange(j,N,freq)
+            if stds[i,j] == 0:
+                r[Idx] = 0
+            else:
+                r[Idx] = (temp[Idx] - avgs[i,j])/stds[i,j]
+        data_deseasonal[:,i] = np.copy(r)
+    
+    #data_deseasonal = difference(data_deseasonal)  
+    weights = np.sqrt(np.abs(np.cos(np.array(lat_sst_list)* math.pi/180)))
+    for i in range(len(weights)):
+        data_deseasonal[:,i] = weights[i] * data_deseasonal[:,i]
+    
+    return(data_deseasonal)
 
 def data_generator_deseasonalized(file_name, code, temporal_limits, missing_value=-9.96921e+36):
     sst = Data(file_name,code,temporal_limits, missing_value= missing_value)
@@ -212,6 +268,66 @@ def PCA_computer_rotated(file_name, code, temporal_limits,n_components_sst=98, m
    # 
    # V = loading_sst
     
+    Vr, Rot = rung.varimax(V)
+    Vr = rung.svd_flip(Vr)
+
+    # Get explained variance of rotated components
+    s2 = np.diag(S)**2 / (ts.shape[0] - 1.)
+
+    # matrix with diagonal containing variances of rotated components
+    S2r = np.dot(np.dot(np.transpose(Rot), np.matrix(np.diag(s2))), Rot)
+    expvar = np.diag(S2r)
+
+    sorted_expvar = np.sort(expvar)[::-1]
+    # s_orig = ((Vt.shape[1] - 1) * s2) ** 0.5
+
+    # reorder all elements according to explained variance (descending)
+    nord = np.argsort(expvar)[::-1]
+    Vr = Vr[:, nord]
+
+    # Get time series of UNMASKED data
+    comps_ts = np.matmul(np.array(data_sst),Vr)
+
+    df_sst = pd.DataFrame({"lons":lon_sst_list,"lats":lat_sst_list})
+
+    lon_temp = df_sst["lons"].values
+    lon_temp[lon_temp > 180] = lon_temp[lon_temp > 180] -360
+    df_sst["lons"].vlues = lon_temp
+    
+    return(result_sst, comps_ts, Vr, df_sst, avgs, stds)
+    
+    
+def PCA_soil_rotated(file_name, code, temporal_limits,n_components_sst=40, missing_value=0):
+    sst = Data(file_name,code,temporal_limits, missing_value= missing_value)
+
+    result = sst.get_data()
+    lon_sst_list = sst.get_lon_list()
+    lat_sst_list = sst.get_lat_list()
+    lon = sst.get_lon()
+    lat = sst.get_lat()
+    
+    lons = np.arange(lon[0],lon[-1],2)
+    lats = np.arange(lat[0],lat[-1],-2)
+
+    INDEX = []
+    for i in range(len(lon_sst_list)):
+        if (lon_sst_list[i] in lons) and (lat_sst_list[i] in lats):
+            INDEX.append(i)
+    
+    result = result[:,INDEX]
+    lat_sst_list = np.array(lat_sst_list)[INDEX]
+    lon_sst_list = np.array(lon_sst_list)[INDEX]
+
+    result_sst, avgs, stds = pf.deseasonalize_avg_std(np.array(result))
+    result_sst = signal.detrend(result_sst, axis=0)
+    weights = np.sqrt(np.abs(np.cos(np.array(lat_sst_list)* math.pi/180)))
+    for i in range(len(weights)):
+        result_sst[:,i] = weights[i] * result_sst[:,i]
+
+    data_sst = pd.DataFrame(result_sst)
+        
+    V, U, S, ts, eig, explained, max_comps = rung.pca_svd(data_sst,truncate_by='max_comps', max_comps=n_components_sst)
+        
     Vr, Rot = rung.varimax(V)
     Vr = rung.svd_flip(Vr)
 
@@ -831,6 +947,55 @@ def corr_generator(ts, count, V, data_sst, tau_min = 1, tau_max = 12, level = 0.
     link = np.delete(link,deleted_index,axis=0)    
     
     return(link)
+
+
+def corr_generator_cluster(ts, count, df_sst, data_sst, tau_min = 1, tau_max = 12, level = 0.05):
+    result_extremes = np.array(count)
+    result_extremes = result_extremes.reshape((-1,1))
+
+    result_sst = np.array(ts)
+
+    data = np.concatenate((result_extremes,result_sst), axis=1)
+    data = np.array(data)
+
+    N = data.shape[1]-1
+    result = np.zeros((tau_max - tau_min + 1,N))
+
+    for j in range(1,N):
+        for i in range(tau_min,tau_max + 1):
+            r, pvalue = crosscorr(data[:,0],data[:,j],lag=i)
+            result[i-tau_min,j] = r if pvalue < level else 0
+      
+    result = np.abs(result)
+    #limit = np.percentile(result, percentile)
+    limit = 0
+    Index = np.where(result > limit)
+    link = np.array(list(zip((Index[1]+1),(Index[0] + tau_min)*(-1)))) 
+    result = result[Index]
+    link = link[(-result).argsort()]
+    
+    df = data_list_maker_cluster(data_sst, df_sst, link)
+    deleted_index = []
+    componenets = set(link[:,0])
+    for componenet in componenets:
+        componenet_index = (link[:,0] == componenet)
+        componenet_list = link[componenet_index]
+        Index = componenet_index.nonzero()[0]
+        sorted_index = np.argsort(componenet_list[:,1],axis=0)
+        mx = ma.masked_array(componenet_list)
+        for i in range(len(sorted_index)):
+            if ma.is_masked(mx[sorted_index[i]]): continue
+            for j in range(i+1,len(sorted_index)):
+                if (not ma.is_masked(mx[sorted_index[i]]) and (df.iloc[:,Index[sorted_index[i]]].corr(df.iloc[:,Index[sorted_index[j]]]) > 0.8)):
+                    mx[sorted_index[j]] = ma.masked
+
+        if not np.isscalar(mx.mask):
+            deleted_index.extend(Index[mx.mask[:,0].nonzero()[0]])
+    deleted_index = np.array(deleted_index)
+    link = np.delete(link,deleted_index,axis=0)    
+    
+    return(link)
+
 
 def clustering_computer(file_name, code, temporal_limits,n_components_sst=76, missing_value=-9.96921e+36):
     sst = Data(file_name,code,temporal_limits, missing_value= missing_value)
