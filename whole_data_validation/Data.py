@@ -28,6 +28,7 @@ class Data:
         f = Dataset(file_name)
         # Create reference to observable
         var = f.variables[variable_name]
+        var = np.squeeze(var)
         #Get time axis from NetCDF file plus dates
         time = f.variables['time'][:]
         units = f.variables['time'].units

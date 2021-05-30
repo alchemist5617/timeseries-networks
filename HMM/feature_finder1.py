@@ -12,6 +12,7 @@ import tigramite.data_processing as pp
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error
 from sklearn.cluster import AgglomerativeClustering
+from scipy import signal
 
 def number_non_random(data):
     """Assumes data of shape (N, T)"""   
@@ -120,8 +121,60 @@ def PCA_computer(file_name, code, temporal_limits,n_components_sst=76, missing_v
     df_sst["lons"].vlues = lon_temp
     
     return(result_sst, ts, V, df_sst, avgs, stds)
+
+def PCA_computer_rotated(file_name, code, temporal_limits,n_components_sst=98, missing_value=-9.96921e+36):
+    sst = Data(file_name,code,temporal_limits, missing_value= missing_value)
+
+    result = sst.get_data()
+    lon_sst_list = sst.get_lon_list()
+    lat_sst_list = sst.get_lat_list()
+
+    result_sst, avgs, stds = pf.deseasonalize_avg_std(np.array(result))
+    result_sst = signal.detrend(result_sst, axis=0)
+    weights = np.sqrt(np.abs(np.cos(np.array(lat_sst_list)* math.pi/180)))
+    for i in range(len(weights)):
+        result_sst[:,i] = weights[i] * result_sst[:,i]
+
+    data_sst = pd.DataFrame(result_sst)
+        
+    V, U, S, ts, eig, explained, max_comps = rung.pca_svd(data_sst,truncate_by='max_comps', max_comps=n_components_sst)
     
-def PCA_computer_rotated(file_name, code, temporal_limits,n_components_sst=76, missing_value=-9.96921e+36):
+   # loading_sst = pf.varimax(V, q=1000)
+   # loading_sst = rung.svd_flip(loading_sst)
+   # for z in range(loading_sst.shape[1]):
+   #     loading_sst[:,z] = loading_sst[:,z] / np.linalg.norm(loading_sst[:,z])
+   # 
+   # V = loading_sst
+    
+    Vr, Rot = rung.varimax(V)
+    Vr = rung.svd_flip(Vr)
+
+    # Get explained variance of rotated components
+    s2 = np.diag(S)**2 / (ts.shape[0] - 1.)
+
+    # matrix with diagonal containing variances of rotated components
+    S2r = np.dot(np.dot(np.transpose(Rot), np.matrix(np.diag(s2))), Rot)
+    expvar = np.diag(S2r)
+
+    sorted_expvar = np.sort(expvar)[::-1]
+    # s_orig = ((Vt.shape[1] - 1) * s2) ** 0.5
+
+    # reorder all elements according to explained variance (descending)
+    nord = np.argsort(expvar)[::-1]
+    Vr = Vr[:, nord]
+
+    # Get time series of UNMASKED data
+    comps_ts = np.matmul(np.array(data_sst),Vr)
+
+    df_sst = pd.DataFrame({"lons":lon_sst_list,"lats":lat_sst_list})
+
+    lon_temp = df_sst["lons"].values
+    lon_temp[lon_temp > 180] = lon_temp[lon_temp > 180] -360
+    df_sst["lons"].vlues = lon_temp
+    
+    return(result_sst, comps_ts, Vr, df_sst, avgs, stds)
+    
+def PCA_computer_rotated1(file_name, code, temporal_limits,n_components_sst=76, missing_value=-9.96921e+36):
     sst = Data(file_name,code,temporal_limits, missing_value= missing_value)
 
     result = sst.get_data()
