@@ -18,6 +18,8 @@ import numpy.ma as ma
 import pickle
 from scipy import linalg
 from statsmodels.tsa.stattools import grangercausalitytests
+from scipy.stats import chi2_contingency
+from sklearn.metrics import mutual_info_score
 
 def load_obj(name):
     with open(name + '.pkl', 'rb') as f:
@@ -1015,7 +1017,42 @@ def corr_generator(ts, count, V, data_sst, tau_min = 1, tau_max = 12, level = 0.
     link = np.delete(link,deleted_index,axis=0)    
     
     return(link)
+     
+def calc_MI(x, y, bins = 10):
+    c_xy = np.histogram2d(x, y, bins)[0]
+    g, p, dof, expected = chi2_contingency(c_xy, lambda_="log-likelihood")
+    #mi = 0.5 * g / c_xy.sum()
+    mi = mutual_info_score(None, None, contingency=c_xy)
+    return(mi, p)
 
+def cross_MI(datax, datay, lag=1, bins = 10):   
+    return(calc_MI(datax[lag:], datay[:-lag],bins))
+        
+def MI_generator(ts, count, V, data_sst, tau_min = 1, tau_max = 12, level = 0.05, bins = 10):
+    result_extremes = np.array(count)
+    result_extremes = result_extremes.reshape((-1,1))
+
+    result_sst = np.array(ts)
+
+    data = np.concatenate((result_extremes,result_sst), axis=1)
+    data = np.array(data)
+
+    N = data.shape[1]-1
+    result = np.zeros((tau_max - tau_min + 1,N))
+
+    for j in range(1,N):
+        for i in range(tau_min,tau_max + 1):
+            MI, pvalue = cross_MI(data[:,0],data[:,j],lag=i, bins = bins)
+            result[i-tau_min,j] = MI if pvalue < level else 0
+      
+    result = np.abs(result)
+    #limit = np.percentile(result, percentile)
+    limit = 0
+    Index = np.where(result > limit)
+    link = np.array(list(zip((Index[1]+1),(Index[0] + tau_min)*(-1)))) 
+    result = result[Index]
+    link = link[(-result).argsort()]       
+    return(link)
 
 def corr_generator_cluster(ts, count, df_sst, data_sst, tau_min = 1, tau_max = 12, level = 0.05):
     result_extremes = np.array(count)
@@ -1237,3 +1274,110 @@ def model_generator_V(count, data_sst, link, V, tau, ratio = 0.8, n_estimators=1
     model.fit(x_train, y_train)
         
     return(base_model, model)
+
+def forward_feature_enso(count, enso, tau, ratio = 0.8, n_estimators=100, max_depth=5):
+    result = []
+    link_list = []
+    start_lag = tau
+    end_lag = tau + 11
+    df = pd.DataFrame({"drought":count})
+
+    df = shift_df(df, start_lag, end_lag)
+    index = int(df.shape[0]*ratio)
+    dim = df.shape[1]
+    x_train, x_test = df.iloc[:index,1:dim], df.iloc[index:,1:dim]
+    y_train, y_test = df.iloc[:index,0], df.iloc[index:,0]
+    base_model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
+    base_model.fit(x_train, y_train)
+    y_pred = base_model.predict(x_test)
+    result.append(mean_squared_error(y_pred, y_test))
+
+    df_count = pd.DataFrame({"drought": count})
+    lags = np.arange(start_lag,end_lag + 1)
+    df_count = df_count.assign(**{
+    '{} (t-{})'.format(col, t): df_count[col].shift(t)
+    for t in lags
+    for col in df_count
+    })
+
+    df_enso = pd.DataFrame({"enso": enso})
+    lags = np.arange(start_lag,end_lag + 1)
+    df_enso = df_enso.assign(**{
+    '{} (t-{})'.format(col, t): df_enso[col].shift(t)
+    for t in lags
+    for col in df_enso
+    })
+
+    df_enso = df_enso.drop(['enso'],1)
+
+    df = pd.concat([df_count, df_enso],axis=1)
+    df = df.dropna()
+
+    base = df.iloc[:,:13].copy()
+    features = df.iloc[:,13:].copy()
+
+    while features.shape[1]>0:
+        min_mse = np.Inf
+        min_index = 0
+        for c in features.columns:
+            mse = feature_score(base, features[c])
+            if (result[-1] > mse) and (min_mse > mse):
+                min_mse = mse
+                min_index = c
+        if isinstance(min_index, int): break
+        result.append(min_mse)
+        base = pd.concat([base, features[min_index]],axis=1)
+        features = features.drop(min_index,1)
+        link_list.append(min_index)
+
+    if len(link_list) > 0:        
+        x_train = base.iloc[:,1:]
+        y_train = base.iloc[:,0]
+        model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
+        model.fit(x_train, y_train)
+    else:
+        model = base_model
+        link_list = []
+    
+    return(np.array(link_list),base_model, model)
+    
+    
+def model_result_enso(count, enso, link, model, tau=1, n_estimators=100, max_depth=5):
+    if len(link) > 0:
+        start_lag = tau
+        end_lag = tau + 11
+
+        df = pd.DataFrame({"drought":count})
+        lags = np.arange(start_lag,end_lag + 1)
+        df = df.assign(**{
+        '{} (t-{})'.format(col, t): df[col].shift(t)
+        for t in lags
+        for col in df
+        })
+        
+        df_enso = pd.DataFrame({"enso": enso})
+        lags = np.arange(start_lag,end_lag + 1)
+        df_enso = df_enso.assign(**{
+        '{} (t-{})'.format(col, t): df_enso[col].shift(t)
+        for t in lags
+        for col in df_enso
+        })
+
+        df_enso = df_enso.drop(['enso'],1)
+        
+        for k in range(len(link)):
+            df = pd.concat([df, df_enso[link[k]]],axis=1) 
+        df = df.dropna()
+
+        x_test = df.iloc[:,1:]
+        y_test = df.iloc[:,0]
+
+        y_pred = model.predict(x_test)
+        return(y_pred, y_test)
+    else:
+        return(np.nan, np.nan)
+def timeseries_enso(file_name, start_year = 1948, end_year=2015, base_year = 1948):
+    start_index = (start_year - base_year) * 12   
+    end_index = start_index + (end_year - (start_year - 1))*12
+    data = np.load(file_name)
+    return(data[start_index:end_index])
