@@ -122,6 +122,17 @@ def drought_timeseries(file_name, start_year = 1922, end_year=2015, extremes_tre
     count_detrend = signal.detrend(count[start_index:end_index])
     return(count[start_index:end_index], count_detrend)
     
+def drought_timeseries_extreme(file_name, start_year = 1922, end_year=2015, extremes_max = -1,extremes_min = -2, base_year = 1922):
+    start_index = (start_year - base_year) * 12
+    end_index = start_index + (end_year - (start_year - 1))*12
+    ET_gamma = np.load(file_name)
+    N = ET_gamma.shape[0]
+    count = []
+    for i in range(N):
+        count.append(np.count_nonzero((ET_gamma[0,:] <= extremes_max) & (ET_gamma[0,:] > extremes_min)))
+    count_detrend = signal.detrend(count[start_index:end_index])
+    return(count[start_index:end_index], count_detrend)
+    
 def spi_timeseries(file_name, start_year = 1922, end_year=2015, index = 0, base_year = 1922):
     start_index = (start_year - base_year) * 12
     end_index = start_index + (end_year - (start_year - 1))*12
@@ -394,7 +405,7 @@ def PCA_soil_rotated(file_name, code, temporal_limits,n_components_sst=40, test_
     return(result_sst, comps_ts, Vr, df_sst, avgs, stds, INDEX, lat_sst_list)
 
 
-def PCMCI_generator(ts, count, tau_min = 0, tau_max = 12, alpha_level = 0.05, save=False, file_name="PCMCI_results"):
+def PCMCI_generator(ts, count, tau_min = 0, tau_max = 12, alpha_level = 0.05, save=False, multi_test = False, file_name="PCMCI_results"):
     result_extremes = np.array(count)
     result_extremes = result_extremes.reshape((-1,1))
     
@@ -414,21 +425,36 @@ def PCMCI_generator(ts, count, tau_min = 0, tau_max = 12, alpha_level = 0.05, sa
 
     pq_matrix = results['p_matrix']
     val_matrix = results['val_matrix']
-   
-    N = pq_matrix.shape[0]
-
-    link_dict = dict()
-    for j in range(N):
-        # Get the good links
-        good_links = np.argwhere(pq_matrix[:, j, 1:] <= alpha_level)
-        # Build a dictionary from these links to their values
-        links = {(i, -tau - 1): np.abs(val_matrix[i, j, abs(tau) + 1])
-                 for i, tau in good_links}
-        # Sort by value
-        link_dict[j] = sorted(links, key=links.get, reverse=True)
-        
-    link = np.array(link_dict[0])
-    link = link[link[:,0] != 0,:]
+     
+    if multi_test:
+        q_matrix = pcmci.get_corrected_pvalues(p_matrix=results['p_matrix'], fdr_method='fdr_bh')
+        N = q_matrix.shape[0]
+        link_dict = dict()
+        for j in range(N):
+            # Get the good links
+            good_links = np.argwhere(q_matrix[:, j, 1:] <= alpha_level)
+            # Build a dictionary from these links to their values
+            links = {(i, -tau - 1): np.abs(val_matrix[i, j, abs(tau) + 1])
+                     for i, tau in good_links}
+            # Sort by value
+            link_dict[j] = sorted(links, key=links.get, reverse=True)
+            
+        link = np.array(link_dict[0])
+        link = link[link[:,0] != 0,:]
+    else:    
+        N = pq_matrix.shape[0]
+        link_dict = dict()
+        for j in range(N):
+            # Get the good links
+            good_links = np.argwhere(pq_matrix[:, j, 1:] <= alpha_level)
+            # Build a dictionary from these links to their values
+            links = {(i, -tau - 1): np.abs(val_matrix[i, j, abs(tau) + 1])
+                     for i, tau in good_links}
+            # Sort by value
+            link_dict[j] = sorted(links, key=links.get, reverse=True)
+            
+        link = np.array(link_dict[0])
+        link = link[link[:,0] != 0,:]
     return(link)
     
 def time_series_maker(pc, df_sst, result, level = 99): 
@@ -657,7 +683,7 @@ def forward_feature_cluster(count, data_sst, link, df_sst, tau,  ratio = 0.8, n_
 def model_generator_V(count, data_sst, link, V, tau, ratio = 0.8, n_estimators=100, max_depth=5):
     
     start_lag = tau
-    end_lag = tau+12
+    end_lag = tau+11
     
     df = pd.DataFrame({"drought":count})
     df = shift_df(df, start_lag, end_lag)
@@ -1244,13 +1270,13 @@ def detrend(data, axis=-1, type='linear', bp=0, overwrite_data=False):
         ret = np.transpose(ret, tuple(olddims))
         return(ret, coef)
 
-def model_generator_V(count, data_sst, link, V, tau, ratio = 0.8, n_estimators=100, max_depth=5):
+def model_generator_V_new(count, data_sst, link, V, tau, ratio = 0.8, n_estimators=100, max_depth=5):
     
     start_lag = tau
-    end_lag = tau+12
+    end_lag = tau+11
     
     df = pd.DataFrame({"drought":count})
-    df = ff.shift_df(df, start_lag, end_lag)
+    df = shift_df(df, start_lag, end_lag)
     x_train = df.iloc[:,1:]
     y_train = df.iloc[:,0]
     base_model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
