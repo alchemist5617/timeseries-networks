@@ -6,9 +6,9 @@ from Data import Data
 from datetime import datetime
 import Rung as rung
 import PCA_functions as pf
-from tigramite.tigramite.pcmci import PCMCI
-from tigramite.tigramite.independence_tests import ParCorr
-import tigramite.tigramite.data_processing as pp
+from tigramite.pcmci import PCMCI
+from tigramite.independence_tests import ParCorr
+import tigramite.data_processing as pp
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error
 from sklearn.cluster import AgglomerativeClustering
