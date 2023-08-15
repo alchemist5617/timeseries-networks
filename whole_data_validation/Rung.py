@@ -11,6 +11,7 @@ import scipy.stats as st
 
 def varimax(Phi, gamma = 1.0, q = 500, 
     rtol = np.finfo(np.float32).eps ** 0.5):
+
     p,k = Phi.shape
     R = np.eye(k)
     d=0

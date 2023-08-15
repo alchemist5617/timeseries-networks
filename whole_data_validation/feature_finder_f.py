@@ -17,9 +17,9 @@ from scipy import stats
 import numpy.ma as ma
 import pickle
 from scipy import linalg
-from statsmodels.tsa.stattools import grangercausalitytests
-from scipy.stats import chi2_contingency
-from sklearn.metrics import mutual_info_score
+#from statsmodels.tsa.stattools import grangercausalitytests
+#from scipy.stats import chi2_contingency
+#from sklearn.metrics import mutual_info_score
 
 def load_obj(name):
     with open(name + '.pkl', 'rb') as f:
@@ -395,6 +395,68 @@ def PCA_soil_rotated(file_name, code, temporal_limits,n_components_sst=40, test_
     return(result_sst, comps_ts, Vr, df_sst, avgs, stds, INDEX, lat_sst_list)
 
 
+def PCA_soil_rotated_locs(file_name, code, temporal_limits,n_components_sst=40, test_n = 0, missing_value=0):
+    sst = Data(file_name,code,temporal_limits, missing_value= missing_value)
+
+    result = sst.get_data()
+    lon_sst_list = sst.get_lon_list()
+    lat_sst_list = sst.get_lat_list()
+    lon = sst.get_lon()
+    lat = sst.get_lat()
+    
+    lons = np.arange(lon[0],lon[-1],2)
+    lats = np.arange(lat[0],lat[-1],-2)
+
+    INDEX = []
+    for i in range(len(lon_sst_list)):
+        if (lon_sst_list[i] in lons) and (lat_sst_list[i] in lats):
+            INDEX.append(i)
+    
+    result = result[:,INDEX]
+    lat_sst_list = np.array(lat_sst_list)[INDEX]
+    lon_sst_list = np.array(lon_sst_list)[INDEX]
+
+    if not test_n == 0:
+        result = result[:-test_n*12,:]
+
+    result_sst, avgs, stds = pf.deseasonalize_avg_std(np.array(result))
+    result_sst = signal.detrend(result_sst, axis=0)
+    weights = np.sqrt(np.abs(np.cos(np.array(lat_sst_list)* math.pi/180)))
+    for i in range(len(weights)):
+        result_sst[:,i] = weights[i] * result_sst[:,i]
+
+    data_sst = pd.DataFrame(result_sst)
+        
+    V, U, S, ts, eig, explained, max_comps = rung.pca_svd(data_sst,truncate_by='max_comps', max_comps=n_components_sst)
+        
+    Vr, Rot = rung.varimax(V)
+    Vr = rung.svd_flip(Vr)
+
+    # Get explained variance of rotated components
+    s2 = np.diag(S)**2 / (ts.shape[0] - 1.)
+
+    # matrix with diagonal containing variances of rotated components
+    S2r = np.dot(np.dot(np.transpose(Rot), np.matrix(np.diag(s2))), Rot)
+    expvar = np.diag(S2r)
+
+    sorted_expvar = np.sort(expvar)[::-1]
+    # s_orig = ((Vt.shape[1] - 1) * s2) ** 0.5
+
+    # reorder all elements according to explained variance (descending)
+    nord = np.argsort(expvar)[::-1]
+    Vr = Vr[:, nord]
+
+    # Get time series of UNMASKED data
+    comps_ts = np.matmul(np.array(data_sst),Vr)
+
+    df_sst = pd.DataFrame({"lons":lon_sst_list,"lats":lat_sst_list})
+
+    lon_temp = df_sst["lons"].values
+    lon_temp[lon_temp > 180] = lon_temp[lon_temp > 180] -360
+    df_sst["lons"].vlues = lon_temp
+    
+    return(result_sst, comps_ts, Vr, df_sst, INDEX, lon , lat)
+
 def PCMCI_generator(ts, count, tau_min = 0, tau_max = 12, alpha_level = 0.05, alpha_level_q = 0.01,save=False, multi_test = False, file_name="PCMCI_results"):
     result_extremes = np.array(count)
     result_extremes = result_extremes.reshape((-1,1))
@@ -615,6 +677,70 @@ def forward_feature_hybrid(count, data_sst, link, V, data_soil, link_soil, V_soi
         link_list = []
     
     return(np.array(link_list),link_name,base_model, model)
+
+
+def forward_feature_hybrid_pcmci(count, data_sst, link, V, data_soil, V_soil,n_components, tau,  ratio = 0.8, n_estimators=100, max_depth=5):
+    result = []
+    link_list = []
+    start_lag = tau
+    end_lag = tau + 11
+    df = pd.DataFrame({"drought":count})
+    
+    df = shift_df(df, start_lag, end_lag)
+    index = int(df.shape[0]*ratio)
+    dim = df.shape[1]
+    x_train, x_test = df.iloc[:index,1:dim], df.iloc[index:,1:dim]
+    y_train, y_test = df.iloc[:index,0], df.iloc[index:,0]
+    base_model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
+    base_model.fit(x_train, y_train)
+    y_pred = base_model.predict(x_test)
+    result.append(mean_squared_error(y_pred, y_test))
+    
+    df = pd.DataFrame({"drought": count})
+    lags = np.arange(start_lag,end_lag + 1)
+    df = df.assign(**{
+    '{} (t-{})'.format(col, t): df[col].shift(t)
+    for t in lags
+    for col in df
+    })
+    for k in range(len(link)):
+        if link[k,0] <= n_components:
+            df[str(k)] = time_series_maker_V(data_sst, V[:,link[k,0]-1])
+            df[str(k)] = df[str(k)].shift(abs(link[k,1]))
+        else:
+            df[str(k)] = time_series_maker_V(data_soil, V_soil[:,link[k,0]-n_components-1])
+            df[str(k)] = df[str(k)].shift(abs(link[k,1]))
+            
+    df = df.dropna()
+    
+    base = df.iloc[:,:13].copy()
+    features = df.iloc[:,13:].copy()
+     
+    while features.shape[1]>0:
+        min_mse = np.Inf
+        min_index = 0
+        for c in features.columns:
+            mse = feature_score(base, features[c])
+            if (result[-1] > mse) and (min_mse > mse):
+                min_mse = mse
+                min_index = c
+        if isinstance(min_index, int): break
+        result.append(min_mse)
+        base = pd.concat([base, features[min_index]],axis=1)
+        features = features.drop(min_index,1)
+        link_list.append(link[int(min_index)])
+            
+    if len(link_list) > 0:        
+        x_train = base.iloc[:,1:]
+        y_train = base.iloc[:,0]
+        model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
+        model.fit(x_train, y_train)
+    else:
+        model = base_model
+        link_list = []
+    
+    return(np.array(link_list),base_model, model)
+
 
 
 def forward_feature_cluster(count, data_sst, link, df_sst, tau,  ratio = 0.8, n_estimators=100, max_depth=5):
@@ -946,6 +1072,39 @@ def model_result_hybrid(count, link, link_name, data_sst, df_sst, V, data_soil, 
         return(y_pred, y_test)
     else:
         return(np.nan, np.nan)
+
+
+def model_result_hybrid_pcmci(count, link, data_sst, df_sst, V, data_soil, df_soil, V_soil, model, n_components, tau=1, n_estimators=100, max_depth=5):
+    if len(link) > 0:
+        start_lag = tau
+        end_lag = tau + 11
+
+        df = pd.DataFrame({"drought":count})
+        lags = np.arange(start_lag,end_lag + 1)
+        df = df.assign(**{
+        '{} (t-{})'.format(col, t): df[col].shift(t)
+        for t in lags
+        for col in df
+        })
+        for k in range(len(link)):
+            if link[k,0] <= n_components:
+                df_sst["pc"] = V[:,link[k,0]-1]
+                df[str(k)] = time_series_maker(link[k,0]-1, df_sst, data_sst)
+                df[str(k)] = df[str(k)].shift(abs(link[k,1]))
+            else:
+                df_soil["pc"] = V_soil[:,link[k,0]-n_components-1]
+                df[str(k)] = time_series_maker(link[k,0]-n_components-1, df_soil, data_soil)
+                df[str(k)] = df[str(k)].shift(abs(link[k,1]))
+        df = df.dropna()
+
+        x_test = df.iloc[:,1:]
+        y_test = df.iloc[:,0]
+
+        y_pred = model.predict(x_test)
+        return(y_pred, y_test)
+    else:
+        return(np.nan, np.nan)
+
 
 def model_result_V(count, data_sst, link, df_sst, V, model, tau=-1, n_estimators=100, max_depth=5): 
     if len(link) > 0:

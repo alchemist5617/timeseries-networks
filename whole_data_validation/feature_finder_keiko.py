@@ -122,17 +122,6 @@ def drought_timeseries(file_name, start_year = 1922, end_year=2015, extremes_tre
     count_detrend = signal.detrend(count[start_index:end_index])
     return(count[start_index:end_index], count_detrend)
     
-def drought_timeseries_extreme(file_name, start_year = 1922, end_year=2015, extremes_max = -1,extremes_min = -2, base_year = 1922):
-    start_index = (start_year - base_year) * 12
-    end_index = start_index + (end_year - (start_year - 1))*12
-    ET_gamma = np.load(file_name)
-    N = ET_gamma.shape[0]
-    count = []
-    for i in range(N):
-        count.append(np.count_nonzero((ET_gamma[0,:] <= extremes_max) & (ET_gamma[0,:] > extremes_min)))
-    count_detrend = signal.detrend(count[start_index:end_index])
-    return(count[start_index:end_index], count_detrend)
-    
 def spi_timeseries(file_name, start_year = 1922, end_year=2015, index = 0, base_year = 1922):
     start_index = (start_year - base_year) * 12
     end_index = start_index + (end_year - (start_year - 1))*12
@@ -341,7 +330,8 @@ def PCA_computer_rotated_locs(file_name, code, temporal_limits,n_components_sst=
     df_sst["lons"].vlues = lon_temp
     
     return(result_sst, comps_ts, Vr, df_sst, lon_sst, lat_sst)
-    
+
+
 def PCA_soil_rotated(file_name, code, temporal_limits,n_components_sst=40, test_n = 0, missing_value=0):
     sst = Data(file_name,code,temporal_limits, missing_value= missing_value)
 
@@ -402,10 +392,72 @@ def PCA_soil_rotated(file_name, code, temporal_limits,n_components_sst=40, test_
     lon_temp[lon_temp > 180] = lon_temp[lon_temp > 180] -360
     df_sst["lons"].vlues = lon_temp
     
-    return(result_sst, comps_ts, Vr, df_sst, avgs, stds, INDEX, lat_sst_list)
+    return(result_sst, comps_ts, Vr, df_sst, avgs, stds, INDEX, lat_sst_list, lats)
 
 
-def PCMCI_generator(ts, count, tau_min = 0, tau_max = 12, alpha_level = 0.05, save=False, multi_test = False, file_name="PCMCI_results"):
+def PCA_soil_rotated_locs(file_name, code, temporal_limits,n_components_sst=40, test_n = 0, missing_value=0):
+    sst = Data(file_name,code,temporal_limits, missing_value= missing_value)
+
+    result = sst.get_data()
+    lon_sst_list = sst.get_lon_list()
+    lat_sst_list = sst.get_lat_list()
+    lon = sst.get_lon()
+    lat = sst.get_lat()
+    
+    lons = np.arange(lon[0],lon[-1],2)
+    lats = np.arange(lat[0],lat[-1],-2)
+
+    INDEX = []
+    for i in range(len(lon_sst_list)):
+        if (lon_sst_list[i] in lons) and (lat_sst_list[i] in lats):
+            INDEX.append(i)
+    
+    result = result[:,INDEX]
+    lat_sst_list = np.array(lat_sst_list)[INDEX]
+    lon_sst_list = np.array(lon_sst_list)[INDEX]
+
+    if not test_n == 0:
+        result = result[:-test_n*12,:]
+
+    result_sst, avgs, stds = pf.deseasonalize_avg_std(np.array(result))
+    result_sst = signal.detrend(result_sst, axis=0)
+    weights = np.sqrt(np.abs(np.cos(np.array(lat_sst_list)* math.pi/180)))
+    for i in range(len(weights)):
+        result_sst[:,i] = weights[i] * result_sst[:,i]
+
+    data_sst = pd.DataFrame(result_sst)
+        
+    V, U, S, ts, eig, explained, max_comps = rung.pca_svd(data_sst,truncate_by='max_comps', max_comps=n_components_sst)
+        
+    Vr, Rot = rung.varimax(V)
+    Vr = rung.svd_flip(Vr)
+
+    # Get explained variance of rotated components
+    s2 = np.diag(S)**2 / (ts.shape[0] - 1.)
+
+    # matrix with diagonal containing variances of rotated components
+    S2r = np.dot(np.dot(np.transpose(Rot), np.matrix(np.diag(s2))), Rot)
+    expvar = np.diag(S2r)
+
+    sorted_expvar = np.sort(expvar)[::-1]
+    # s_orig = ((Vt.shape[1] - 1) * s2) ** 0.5
+
+    # reorder all elements according to explained variance (descending)
+    nord = np.argsort(expvar)[::-1]
+    Vr = Vr[:, nord]
+
+    # Get time series of UNMASKED data
+    comps_ts = np.matmul(np.array(data_sst),Vr)
+
+    df_sst = pd.DataFrame({"lons":lon_sst_list,"lats":lat_sst_list})
+
+    lon_temp = df_sst["lons"].values
+    lon_temp[lon_temp > 180] = lon_temp[lon_temp > 180] -360
+    df_sst["lons"].vlues = lon_temp
+    
+    return(result_sst, comps_ts, Vr, df_sst, INDEX, lons , lats)
+
+def PCMCI_generator(ts, count, tau_min = 0, tau_max = 12, alpha_level = 0.05, alpha_level_q = 0.01,save=False, multi_test = False, file_name="PCMCI_results"):
     result_extremes = np.array(count)
     result_extremes = result_extremes.reshape((-1,1))
     
@@ -432,7 +484,7 @@ def PCMCI_generator(ts, count, tau_min = 0, tau_max = 12, alpha_level = 0.05, sa
         link_dict = dict()
         for j in range(N):
             # Get the good links
-            good_links = np.argwhere(q_matrix[:, j, 1:] <= alpha_level)
+            good_links = np.argwhere(q_matrix[:, j, 1:] <= alpha_level_q)
             # Build a dictionary from these links to their values
             links = {(i, -tau - 1): np.abs(val_matrix[i, j, abs(tau) + 1])
                      for i, tau in good_links}
@@ -440,7 +492,8 @@ def PCMCI_generator(ts, count, tau_min = 0, tau_max = 12, alpha_level = 0.05, sa
             link_dict[j] = sorted(links, key=links.get, reverse=True)
             
         link = np.array(link_dict[0])
-        link = link[link[:,0] != 0,:]
+        if len(link) > 0:
+            link = link[link[:,0] != 0,:]
     else:    
         N = pq_matrix.shape[0]
         link_dict = dict()
@@ -508,47 +561,51 @@ def forward_feature_V(count, data_sst, link, V, df_sst, tau, ratio = 0.8, n_esti
     y_pred = base_model.predict(x_test)
     result.append(mean_squared_error(y_pred, y_test))
     
-    df = pd.DataFrame({"drought": count})
-    lags = np.arange(start_lag,end_lag + 1)
-    df = df.assign(**{
-    '{} (t-{})'.format(col, t): df[col].shift(t)
-    for t in lags
-    for col in df
-    })
-    for k in range(len(link)):
-#        df_sst["pc"] = V[:,link[k,0]-1]
- #       df[str(k)] = time_series_maker(link[k,0]-1, df_sst, data_sst)
-
-        df[str(k)] = time_series_maker_V(data_sst, V[:,link[k,0]-1])
-        df[str(k)] = df[str(k)].shift(abs(link[k,1]))
-    df = df.dropna()
+    if len(link) > 0:
+        df = pd.DataFrame({"drought": count})
+        lags = np.arange(start_lag,end_lag + 1)
+        df = df.assign(**{
+        '{} (t-{})'.format(col, t): df[col].shift(t)
+        for t in lags
+        for col in df
+        })
+        for k in range(len(link)):
+    #        df_sst["pc"] = V[:,link[k,0]-1]
+     #       df[str(k)] = time_series_maker(link[k,0]-1, df_sst, data_sst)
     
-    base = df.iloc[:,:13].copy()
-    features = df.iloc[:,13:].copy()
-    
-    while features.shape[1]>0:
-        min_mse = np.Inf
-        min_index = 0
-        for c in features.columns:
-            mse = feature_score(base, features[c])
-            if (result[-1] > mse) and (min_mse > mse):
-                min_mse = mse
-                min_index = c
-        if isinstance(min_index, int): break
-        result.append(min_mse)
-        base = pd.concat([base, features[min_index]],axis=1)
-        features = features.drop(min_index,1)
-        link_list.append(link[int(min_index)])
+            df[str(k)] = time_series_maker_V(data_sst, V[:,link[k,0]-1])
+            df[str(k)] = df[str(k)].shift(abs(link[k,1]))
+        df = df.dropna()
+        
+        base = df.iloc[:,:13].copy()
+        features = df.iloc[:,13:].copy()
+        
+        while features.shape[1]>0:
+            min_mse = np.Inf
+            min_index = 0
+            for c in features.columns:
+                mse = feature_score(base, features[c])
+                if (result[-1] > mse) and (min_mse > mse):
+                    min_mse = mse
+                    min_index = c
+            if isinstance(min_index, int): break
+            result.append(min_mse)
+            base = pd.concat([base, features[min_index]],axis=1)
+            features = features.drop(min_index,1)
+            link_list.append(link[int(min_index)])
             
-    if len(link_list) > 0:        
-        x_train = base.iloc[:,1:]
-        y_train = base.iloc[:,0]
-        model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
-        model.fit(x_train, y_train)
+        if len(link_list) > 0:        
+            x_train = base.iloc[:,1:]
+            y_train = base.iloc[:,0]
+            model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
+            model.fit(x_train, y_train)
+        else:
+            model = base_model
+            link_list = []
     else:
         model = base_model
         link_list = []
-    
+
     return(np.array(link_list),base_model, model)
     
 def forward_feature_hybrid(count, data_sst, link, V, data_soil, link_soil, V_soil, tau,  ratio = 0.8, n_estimators=100, max_depth=5):
@@ -622,6 +679,70 @@ def forward_feature_hybrid(count, data_sst, link, V, data_soil, link_soil, V_soi
     return(np.array(link_list),link_name,base_model, model)
 
 
+def forward_feature_hybrid_pcmci(count, data_sst, link, V, data_soil, V_soil,n_components, tau,  ratio = 0.8, n_estimators=100, max_depth=5):
+    result = []
+    link_list = []
+    start_lag = tau
+    end_lag = tau + 11
+    df = pd.DataFrame({"drought":count})
+    
+    df = shift_df(df, start_lag, end_lag)
+    index = int(df.shape[0]*ratio)
+    dim = df.shape[1]
+    x_train, x_test = df.iloc[:index,1:dim], df.iloc[index:,1:dim]
+    y_train, y_test = df.iloc[:index,0], df.iloc[index:,0]
+    base_model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
+    base_model.fit(x_train, y_train)
+    y_pred = base_model.predict(x_test)
+    result.append(mean_squared_error(y_pred, y_test))
+    
+    df = pd.DataFrame({"drought": count})
+    lags = np.arange(start_lag,end_lag + 1)
+    df = df.assign(**{
+    '{} (t-{})'.format(col, t): df[col].shift(t)
+    for t in lags
+    for col in df
+    })
+    for k in range(len(link)):
+        if link[k,0] <= n_components:
+            df[str(k)] = time_series_maker_V(data_sst, V[:,link[k,0]-1])
+            df[str(k)] = df[str(k)].shift(abs(link[k,1]))
+        else:
+            df[str(k)] = time_series_maker_V(data_soil, V_soil[:,link[k,0]-n_components-1])
+            df[str(k)] = df[str(k)].shift(abs(link[k,1]))
+            
+    df = df.dropna()
+    
+    base = df.iloc[:,:13].copy()
+    features = df.iloc[:,13:].copy()
+     
+    while features.shape[1]>0:
+        min_mse = np.Inf
+        min_index = 0
+        for c in features.columns:
+            mse = feature_score(base, features[c])
+            if (result[-1] > mse) and (min_mse > mse):
+                min_mse = mse
+                min_index = c
+        if isinstance(min_index, int): break
+        result.append(min_mse)
+        base = pd.concat([base, features[min_index]],axis=1)
+        features = features.drop(min_index,1)
+        link_list.append(link[int(min_index)])
+            
+    if len(link_list) > 0:        
+        x_train = base.iloc[:,1:]
+        y_train = base.iloc[:,0]
+        model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
+        model.fit(x_train, y_train)
+    else:
+        model = base_model
+        link_list = []
+    
+    return(np.array(link_list),base_model, model)
+
+
+
 def forward_feature_cluster(count, data_sst, link, df_sst, tau,  ratio = 0.8, n_estimators=100, max_depth=5):
     result = []
     link_list = []
@@ -679,7 +800,6 @@ def forward_feature_cluster(count, data_sst, link, df_sst, tau,  ratio = 0.8, n_
     
     return(np.array(link_list),base_model, model)   
 
-
 def model_generator_V(count, data_sst, link, V, tau, ratio = 0.8, n_estimators=100, max_depth=5):
     
     start_lag = tau
@@ -691,25 +811,28 @@ def model_generator_V(count, data_sst, link, V, tau, ratio = 0.8, n_estimators=1
     y_train = df.iloc[:,0]
     base_model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
     base_model.fit(x_train, y_train)        
+    
+    if len(link) > 0:
+        df = pd.DataFrame({"drought": count})
+        lags = np.arange(start_lag,end_lag + 1)
+        df = df.assign(**{
+        '{} (t-{})'.format(col, t): df[col].shift(t)
+        for t in lags
+        for col in df
+        })
+        for k in range(len(link)):
+            df[str(k)] = time_series_maker_V(data_sst, V[:,link[k,0]-1])
+            df[str(k)] = df[str(k)].shift(abs(link[k,1]))
+        df = df.dropna()
             
-    df = pd.DataFrame({"drought": count})
-    lags = np.arange(start_lag,end_lag + 1)
-    df = df.assign(**{
-    '{} (t-{})'.format(col, t): df[col].shift(t)
-    for t in lags
-    for col in df
-    })
-    for k in range(len(link)):
-        df[str(k)] = time_series_maker_V(data_sst, V[:,link[k,0]-1])
-        df[str(k)] = df[str(k)].shift(abs(link[k,1]))
-    df = df.dropna()
-        
-    x_train = df.iloc[:,1:]
-    y_train = df.iloc[:,0]
-    model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
-    model.fit(x_train, y_train)
-        
-    return(base_model, model)
+        x_train = df.iloc[:,1:]
+        y_train = df.iloc[:,0]
+        model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
+        model.fit(x_train, y_train)
+            
+        return(base_model, model)
+    else:
+        return(base_model, base_model)
 
 def forward_feature(count, data_sst, df_sst, link, V, tau, ratio = 0.8, n_estimators=100, max_depth=5 ):
     result = []
@@ -887,10 +1010,10 @@ def base_model_result(count, base_model, link, tau=-1):
     return(y_pred, y_test)
 
 def model_result(count, data_sst, link, df_sst, V, model, tau=1, n_estimators=100, max_depth=5):
+    start_lag = tau
+    end_lag = tau + 11  
+    
     if len(link) > 0:
-        start_lag = tau
-        end_lag = tau + 11
-
         df = pd.DataFrame({"drought":count})
         lags = np.arange(start_lag,end_lag + 1)
         df = df.assign(**{
@@ -910,7 +1033,14 @@ def model_result(count, data_sst, link, df_sst, V, model, tau=1, n_estimators=10
         y_pred = model.predict(x_test)
         return(y_pred, y_test)
     else:
-        return(np.nan, np.nan)
+        df = pd.DataFrame({"drought":count})
+        df = shift_df(df, start_lag, end_lag)
+
+        x_test =  df.iloc[:,1:].values
+        y_test = df.iloc[:,0].values
+
+        y_pred = model.predict(x_test)
+        return(y_pred, y_test)
         
 def model_result_hybrid(count, link, link_name, data_sst, df_sst, V, data_soil, df_soil, V_soil, model, tau=1, n_estimators=100, max_depth=5):
     if len(link) > 0:
@@ -942,6 +1072,39 @@ def model_result_hybrid(count, link, link_name, data_sst, df_sst, V, data_soil, 
         return(y_pred, y_test)
     else:
         return(np.nan, np.nan)
+
+
+def model_result_hybrid_pcmci(count, link, data_sst, df_sst, V, data_soil, df_soil, V_soil, model, n_components, tau=1, n_estimators=100, max_depth=5):
+    if len(link) > 0:
+        start_lag = tau
+        end_lag = tau + 11
+
+        df = pd.DataFrame({"drought":count})
+        lags = np.arange(start_lag,end_lag + 1)
+        df = df.assign(**{
+        '{} (t-{})'.format(col, t): df[col].shift(t)
+        for t in lags
+        for col in df
+        })
+        for k in range(len(link)):
+            if link[k,0] <= n_components:
+                df_sst["pc"] = V[:,link[k,0]-1]
+                df[str(k)] = time_series_maker(link[k,0]-1, df_sst, data_sst)
+                df[str(k)] = df[str(k)].shift(abs(link[k,1]))
+            else:
+                df_soil["pc"] = V_soil[:,link[k,0]-n_components-1]
+                df[str(k)] = time_series_maker(link[k,0]-n_components-1, df_soil, data_soil)
+                df[str(k)] = df[str(k)].shift(abs(link[k,1]))
+        df = df.dropna()
+
+        x_test = df.iloc[:,1:]
+        y_test = df.iloc[:,0]
+
+        y_pred = model.predict(x_test)
+        return(y_pred, y_test)
+    else:
+        return(np.nan, np.nan)
+
 
 def model_result_V(count, data_sst, link, df_sst, V, model, tau=-1, n_estimators=100, max_depth=5): 
     if len(link) > 0:
@@ -997,7 +1160,7 @@ def model_result_cluster(count, data_sst, link, df_sst, model, tau=1, n_estimato
 def crosscorr(datax, datay, lag=1):   
     return(stats.pearsonr(datax[lag:], datay[:-lag]))
         
-def corr_generator(ts, count, V, data_sst, tau_min = 1, tau_max = 12, level = 0.05):
+def corr_generator(ts, count, V, data_sst, tau_min = 1, tau_max = 12, level = 0.05, auto_corr = 0.8):
     result_extremes = np.array(count)
     result_extremes = result_extremes.reshape((-1,1))
 
@@ -1009,10 +1172,10 @@ def corr_generator(ts, count, V, data_sst, tau_min = 1, tau_max = 12, level = 0.
     N = data.shape[1]-1
     result = np.zeros((tau_max - tau_min + 1,N))
 
-    for j in range(1,N):
+    for j in range(1,N+1):
         for i in range(tau_min,tau_max + 1):
             r, pvalue = crosscorr(data[:,0],data[:,j],lag=i)
-            result[i-tau_min,j] = r if pvalue < level else 0
+            result[i-tau_min,j-1] = r if pvalue < level else 0
       
     result = np.abs(result)
     #limit = np.percentile(result, percentile)
@@ -1034,7 +1197,7 @@ def corr_generator(ts, count, V, data_sst, tau_min = 1, tau_max = 12, level = 0.
         for i in range(len(sorted_index)):
             if ma.is_masked(mx[sorted_index[i]]): continue
             for j in range(i+1,len(sorted_index)):
-                if (not ma.is_masked(mx[sorted_index[i]]) and (df.iloc[:,Index[sorted_index[i]]].corr(df.iloc[:,Index[sorted_index[j]]]) > 0.8)):
+                if (not ma.is_masked(mx[sorted_index[i]]) and (df.iloc[:,Index[sorted_index[i]]].corr(df.iloc[:,Index[sorted_index[j]]]) > auto_corr)):
                     mx[sorted_index[j]] = ma.masked
 
         if not np.isscalar(mx.mask):
@@ -1043,7 +1206,7 @@ def corr_generator(ts, count, V, data_sst, tau_min = 1, tau_max = 12, level = 0.
     link = np.delete(link,deleted_index,axis=0)    
     
     return(link)
-     
+
 def calc_MI(x, y, bins = 10):
     c_xy = np.histogram2d(x, y, bins)[0]
     g, p, dof, expected = chi2_contingency(c_xy, lambda_="log-likelihood")
@@ -1054,7 +1217,7 @@ def calc_MI(x, y, bins = 10):
 def cross_MI(datax, datay, lag=1, bins = 10):   
     return(calc_MI(datax[lag:], datay[:-lag],bins))
         
-def MI_generator(ts, count, V, data_sst, tau_min = 1, tau_max = 12, level = 0.05, bins = 10):
+def MI_generator(ts, count, V, data_sst, tau_min = 1, tau_max = 12, level = 0.05,auto_corr = 0.8, bins = 10):
     result_extremes = np.array(count)
     result_extremes = result_extremes.reshape((-1,1))
 
@@ -1066,10 +1229,10 @@ def MI_generator(ts, count, V, data_sst, tau_min = 1, tau_max = 12, level = 0.05
     N = data.shape[1]-1
     result = np.zeros((tau_max - tau_min + 1,N))
 
-    for j in range(1,N):
+    for j in range(1,N+1):
         for i in range(tau_min,tau_max + 1):
             MI, pvalue = cross_MI(data[:,0],data[:,j],lag=i, bins = bins)
-            result[i-tau_min,j] = MI if pvalue < level else 0
+            result[i-tau_min,j-1] = MI if pvalue < level else 0
       
     result = np.abs(result)
     #limit = np.percentile(result, percentile)
@@ -1077,7 +1240,29 @@ def MI_generator(ts, count, V, data_sst, tau_min = 1, tau_max = 12, level = 0.05
     Index = np.where(result > limit)
     link = np.array(list(zip((Index[1]+1),(Index[0] + tau_min)*(-1)))) 
     result = result[Index]
+    
     link = link[(-result).argsort()]       
+    
+    df = data_list_maker_V(data_sst, V, link)
+    deleted_index = []
+    componenets = set(link[:,0])
+    for componenet in componenets:
+        componenet_index = (link[:,0] == componenet)
+        componenet_list = link[componenet_index]
+        Index = componenet_index.nonzero()[0]
+        sorted_index = np.argsort(componenet_list[:,1],axis=0)
+        mx = ma.masked_array(componenet_list)
+        for i in range(len(sorted_index)):
+            if ma.is_masked(mx[sorted_index[i]]): continue
+            for j in range(i+1,len(sorted_index)):
+                if (not ma.is_masked(mx[sorted_index[i]]) and (df.iloc[:,Index[sorted_index[i]]].corr(df.iloc[:,Index[sorted_index[j]]]) > auto_corr)):
+                    mx[sorted_index[j]] = ma.masked
+
+        if not np.isscalar(mx.mask):
+            deleted_index.extend(Index[mx.mask[:,0].nonzero()[0]])
+    deleted_index = np.array(deleted_index)
+    link = np.delete(link,deleted_index,axis=0) 
+
     return(link)
 
 def corr_generator_cluster(ts, count, df_sst, data_sst, tau_min = 1, tau_max = 12, level = 0.05):
@@ -1092,10 +1277,10 @@ def corr_generator_cluster(ts, count, df_sst, data_sst, tau_min = 1, tau_max = 1
     N = data.shape[1]-1
     result = np.zeros((tau_max - tau_min + 1,N))
 
-    for j in range(1,N):
+    for j in range(1,N+1):
         for i in range(tau_min,tau_max + 1):
             r, pvalue = crosscorr(data[:,0],data[:,j],lag=i)
-            result[i-tau_min,j] = r if pvalue < level else 0
+            result[i-tau_min,j-1] = r if pvalue < level else 0
       
     result = np.abs(result)
     #limit = np.percentile(result, percentile)
@@ -1170,7 +1355,7 @@ def base_model_result1(count, base_model, tau=-1):
     y_pred = base_model.predict(x_test)
     return(mean_squared_error(y_pred, y_test))
 
-def granger_generator(ts, count, test_type = "all", tau_min = 1, tau_max = 12,level = 0.05):
+def granger_generator(ts, count, V, data_sst, test_type = "all", tau_min = 1, tau_max = 12,level = 0.05, auto_corr = 0.8):
     result_extremes = np.array(count)
     result_extremes = result_extremes.reshape((-1,1))
     componenet = []
@@ -1209,6 +1394,27 @@ def granger_generator(ts, count, test_type = "all", tau_min = 1, tau_max = 12,le
                 lag.append(-j)
             
     link = np.array(list(zip((componenet),(lag))))    
+    
+    df = data_list_maker_V(data_sst, V, link)
+    deleted_index = []
+    componenets = set(link[:,0])
+    for componenet in componenets:
+        componenet_index = (link[:,0] == componenet)
+        componenet_list = link[componenet_index]
+        Index = componenet_index.nonzero()[0]
+        sorted_index = np.argsort(componenet_list[:,1],axis=0)
+        mx = ma.masked_array(componenet_list)
+        for i in range(len(sorted_index)):
+            if ma.is_masked(mx[sorted_index[i]]): continue
+            for j in range(i+1,len(sorted_index)):
+                if (not ma.is_masked(mx[sorted_index[i]]) and (df.iloc[:,Index[sorted_index[i]]].corr(df.iloc[:,Index[sorted_index[j]]]) > auto_corr)):
+                    mx[sorted_index[j]] = ma.masked
+
+        if not np.isscalar(mx.mask):
+            deleted_index.extend(Index[mx.mask[:,0].nonzero()[0]])
+    deleted_index = np.array(deleted_index)
+    link = np.delete(link,deleted_index,axis=0) 
+
     return(link)
 
 def prod(iterable):
@@ -1270,13 +1476,13 @@ def detrend(data, axis=-1, type='linear', bp=0, overwrite_data=False):
         ret = np.transpose(ret, tuple(olddims))
         return(ret, coef)
 
-def model_generator_V_new(count, data_sst, link, V, tau, ratio = 0.8, n_estimators=100, max_depth=5):
+def model_generator_V_old(count, data_sst, link, V, tau, ratio = 0.8, n_estimators=100, max_depth=5):
     
     start_lag = tau
-    end_lag = tau+11
+    end_lag = tau+12
     
     df = pd.DataFrame({"drought":count})
-    df = shift_df(df, start_lag, end_lag)
+    df = ff.shift_df(df, start_lag, end_lag)
     x_train = df.iloc[:,1:]
     y_train = df.iloc[:,0]
     base_model = RandomForestRegressor(max_depth=max_depth, random_state=0, n_estimators=n_estimators)
@@ -1402,7 +1608,7 @@ def model_result_enso(count, enso, link, model, tau=1, n_estimators=100, max_dep
         return(y_pred, y_test)
     else:
         return(np.nan, np.nan)
-def timeseries_enso(file_name, start_year = 1948, end_year=2015, base_year = 1948):
+def timeseries_enso(file_name, start_year = 1950, end_year=2015, base_year = 1948):
     start_index = (start_year - base_year) * 12   
     end_index = start_index + (end_year - (start_year - 1))*12
     data = np.load(file_name)

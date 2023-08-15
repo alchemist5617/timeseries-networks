@@ -49,7 +49,7 @@ import scipy.stats as st
 
 import reverse_geocoder as rg
 
-from pandas_datareader import wb
+#from pandas_datareader import wb
 
 level = 12
 temporal_limits = {"time_min":datetime(1946, 1, 1, 0, 0),"time_max":datetime(2016, 1, 1, 0, 0) } 
